@@ -1,5 +1,6 @@
 #![allow(clippy::result_large_err)]
 mod api;
+mod audit;
 mod auth;
 mod bots;
 mod channels;
@@ -21,6 +22,7 @@ mod reactions;
 mod roles;
 mod search;
 mod session;
+mod settings;
 mod state;
 mod threads;
 mod uploads;
