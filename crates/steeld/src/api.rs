@@ -8,7 +8,7 @@ use axum::{
 use flint_protocol::{ApiError, LoginRequest, RegisterRequest, TokenResponse, User};
 
 use crate::{
-    auth, bots, chat, dm, gateway, members, pins, polls, presence, reactions, search,
+    auth, bots, chat, dm, emojis, gateway, members, pins, polls, presence, reactions, search,
     state::AppState, threads, uploads,
 };
 
@@ -32,6 +32,7 @@ pub fn router(state: AppState) -> Router {
         .merge(pins::routes())
         .merge(polls::routes())
         .merge(threads::routes())
+        .merge(emojis::routes())
         .merge(search::routes())
         .merge(crate::profile::routes())
         .merge(crate::roles::routes())

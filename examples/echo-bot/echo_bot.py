@@ -3,7 +3,7 @@
 It registers three slash commands, answers them, and shows a button and a modal.
 
   /ping            replies "pong"
-  /echo text:...   repeats the text back (ephemeral, only you see it)
+  /echo text:...   repeats the text back (ephemeral, only you see it); autocompletes words
   /hello           posts a message with a button; pressing it edits the message
 
 Setup (see README.md): create an application and bot token, add the bot to a guild you own,
@@ -30,7 +30,9 @@ COMMANDS = [
     {
         "name": "echo",
         "description": "Repeat text back to you, privately",
-        "options": [{"type": 3, "name": "text", "description": "What to repeat", "required": True}],
+        "options": [
+            {"type": 3, "name": "text", "description": "What to repeat", "required": True, "autocomplete": True}
+        ],
     },
     {"name": "hello", "description": "Post a message with a button"},
 ]
@@ -65,9 +67,18 @@ def option(interaction, name):
     return None
 
 
+SUGGESTIONS = ["hello", "hello again", "help", "echo", "ping"]
+
+
 async def handle(interaction):
     kind = interaction["type"]
     name = interaction["data"].get("name")
+    if kind == 4:
+        # Autocomplete: suggest the words that start with what the user has typed so far.
+        typed = next((o.get("value", "") for o in interaction["data"].get("options", []) if o.get("focused")), "")
+        choices = [{"name": w, "value": w} for w in SUGGESTIONS if w.startswith(typed)][:25]
+        await asyncio.to_thread(callback, interaction, 8, {"choices": choices})
+        return
     if kind == 2 and name == "ping":
         await asyncio.to_thread(callback, interaction, 4, {"content": "pong"})
     elif kind == 2 and name == "echo":
