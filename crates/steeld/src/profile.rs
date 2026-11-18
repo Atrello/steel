@@ -29,13 +29,14 @@ async fn get_profile(
 ) -> Response {
     let result: ApiResult<Response> = async {
         chat::authed(&state, &headers).await?;
-        let (id, username): (String, String) =
-            sqlx::query_as("SELECT id, username FROM users WHERE id = ?")
-                .bind(&user_id)
-                .fetch_optional(&state.db)
-                .await
-                .map_err(chat::db)?
-                .ok_or_else(chat::missing_member)?;
+        let (id, username): (String, String) = sqlx::query_as(&crate::db::sql(
+            "SELECT id, username FROM users WHERE id = ?",
+        ))
+        .bind(&user_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(chat::db)?
+        .ok_or_else(chat::missing_member)?;
         let body: Value = json!({
             "user": {
                 "id": id,
