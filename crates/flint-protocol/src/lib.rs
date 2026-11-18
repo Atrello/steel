@@ -16,6 +16,8 @@ pub mod op {
     pub const INVALID_SESSION: u8 = 9;
     pub const HELLO: u8 = 10;
     pub const HEARTBEAT_ACK: u8 = 11;
+    /// Guild subscriptions: member list ranges and typing (Flint sends this as op 37).
+    pub const GUILD_SUBSCRIBE: u8 = 37;
 }
 
 /// A gateway frame in either direction.

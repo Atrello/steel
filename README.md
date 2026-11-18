@@ -14,7 +14,7 @@ deploy/                 Dockerfile, docker-compose.yml, example env file
 
 ## Status
 
-Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.py`, `scripts/dm_smoke_test.py`, `scripts/presence_smoke_test.py`, `scripts/upload_smoke_test.py`, `scripts/resume_smoke_test.py`, `scripts/staged_upload_smoke_test.py`, `scripts/members_smoke_test.py`, `scripts/phase2_smoke_test.py`, `scripts/polls_smoke_test.py`, `scripts/bots_smoke_test.py`, `scripts/threads_smoke_test.py`. Implemented so far:
+Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.py`, `scripts/dm_smoke_test.py`, `scripts/presence_smoke_test.py`, `scripts/upload_smoke_test.py`, `scripts/resume_smoke_test.py`, `scripts/staged_upload_smoke_test.py`, `scripts/members_smoke_test.py`, `scripts/phase2_smoke_test.py`, `scripts/polls_smoke_test.py`, `scripts/bots_smoke_test.py`, `scripts/threads_smoke_test.py`, `scripts/member_list_smoke_test.py`. Implemented so far:
 
 - Accounts: `POST /api/v10/auth/register`, `POST /api/v10/auth/login`, `GET /api/v10/users/@me`
 - Argon2id password hashes; opaque bearer tokens stored only as SHA-256 hashes
@@ -37,9 +37,10 @@ Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.p
 - Pins: list (`GET .../messages/pins`, paged by `before`), pin and unpin (`PUT`/`DELETE .../messages/pins/{id}`). Guild owner pins in guilds; any DM participant pins in DMs. Up to 50 per channel. Event: `CHANNEL_PINS_UPDATE`.
 - Polls: create with `poll` on a message (2 to 10 answers, 1 to 768 hours, optional multiselect); vote with `PUT .../polls/{id}/answers/@me`; the author ends it with `POST .../polls/{id}/expire`. Messages carry `poll` with counts and `me_voted`. Events: `MESSAGE_POLL_VOTE_ADD`, `MESSAGE_POLL_VOTE_REMOVE`.
 - Threads: start from a message (`POST .../messages/{id}/threads`, one per message, id = message id) or standalone (`POST .../channels/{id}/threads`, public only). Listed in `GET /guilds/{id}/threads/active`; events `THREAD_CREATE`. Thread members, private threads, and archiving are not implemented yet.
+- Member list: Flint's op 37 subscription (`channels: {channel_id: [[start, end]]}`) gets `GUILD_MEMBER_LIST_UPDATE` SYNC ops on the same socket. One `everyone` list sorted by username, all in the `offline` group. Non-members get nothing. Presence groups are not included yet.
 - Search: `GET /guilds/{id}/messages/search` and `GET /channels/{id}/messages/search` with `content`, `limit`, `offset`. Case-insensitive substring, newest first.
 
-Not yet implemented: forums, member list, emoji and stickers, profiles and settings, audit log, moderation beyond kick and ban, onboarding, roles and permissions, mention counts, voice-related member fields (mute, deafen).
+Not yet implemented: forums, emoji and stickers, profiles and settings, audit log, moderation beyond kick and ban, onboarding, roles and permissions, mention counts, voice-related member fields (mute, deafen).
 
 ## Run locally
 
