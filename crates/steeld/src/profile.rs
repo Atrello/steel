@@ -23,6 +23,9 @@ pub fn routes() -> Router<AppState> {
     )
 }
 
+/// global_name, bio, pronouns, accent_color.
+type ProfileRow = (Option<String>, Option<String>, Option<String>, Option<i64>);
+
 const MAX_GLOBAL_NAME: usize = 32;
 const MAX_BIO: usize = 190;
 const MAX_PRONOUNS: usize = 40;
@@ -98,7 +101,7 @@ pub async fn edit_me(
         }
 
         // Read the current row so untouched fields keep their values.
-        let current: Option<(Option<String>, Option<String>, Option<String>, Option<i64>)> = sqlx::query_as(&crate::db::sql(
+        let current: Option<ProfileRow> = sqlx::query_as(&crate::db::sql(
             "SELECT global_name, bio, pronouns, accent_color FROM user_profiles WHERE user_id = ?",
         ))
         .bind(&user.id)
@@ -152,7 +155,7 @@ async fn get_profile(
         .await
         .map_err(chat::db)?
         .ok_or_else(chat::missing_member)?;
-        let profile: Option<(Option<String>, Option<String>, Option<String>, Option<i64>)> = sqlx::query_as(&crate::db::sql(
+        let profile: Option<ProfileRow> = sqlx::query_as(&crate::db::sql(
             "SELECT global_name, bio, pronouns, accent_color FROM user_profiles WHERE user_id = ?",
         ))
         .bind(&id)
