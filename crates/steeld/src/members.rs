@@ -418,6 +418,7 @@ async fn kick_member(
     Path((guild_id, user_id)): Path<(String, String)>,
 ) -> Response {
     let result: ApiResult<Response> = async {
+        let actor = chat::authed(&state, &headers).await?;
         moderation_target(
             &state,
             &headers,
@@ -438,6 +439,17 @@ async fn kick_member(
             return Err(chat::missing_member());
         }
         remove_membership(&state, &guild_id, &user_id).await?;
+        crate::audit::record(
+            &state,
+            &guild_id,
+            &actor.id,
+            crate::audit::KICK,
+            Some(&user_id),
+            serde_json::json!([]),
+            None,
+        )
+        .await
+        .map_err(db)?;
         Ok(StatusCode::NO_CONTENT.into_response())
     }
     .await;
@@ -451,6 +463,7 @@ async fn ban_member(
     Path((guild_id, user_id)): Path<(String, String)>,
 ) -> Response {
     let result: ApiResult<Response> = async {
+        let actor = chat::authed(&state, &headers).await?;
         moderation_target(
             &state,
             &headers,
@@ -479,6 +492,17 @@ async fn ban_member(
         if was_member.is_some() {
             remove_membership(&state, &guild_id, &user_id).await?;
         }
+        crate::audit::record(
+            &state,
+            &guild_id,
+            &actor.id,
+            crate::audit::BAN_ADD,
+            Some(&user_id),
+            serde_json::json!([]),
+            None,
+        )
+        .await
+        .map_err(db)?;
         let remaining = chat::member_ids(&state, &guild_id).await.map_err(db)?;
         state.publish(
             remaining,
@@ -506,6 +530,17 @@ async fn unban_member(
         .bind(&guild_id)
         .bind(&user_id)
         .execute(&state.db)
+        .await
+        .map_err(db)?;
+        crate::audit::record(
+            &state,
+            &guild_id,
+            &me.id,
+            crate::audit::BAN_REMOVE,
+            Some(&user_id),
+            serde_json::json!([]),
+            None,
+        )
         .await
         .map_err(db)?;
         let remaining = chat::member_ids(&state, &guild_id).await.map_err(db)?;

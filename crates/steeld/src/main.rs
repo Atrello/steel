@@ -1,14 +1,20 @@
 #![allow(clippy::result_large_err)]
 mod api;
+mod audit;
 mod auth;
 mod bots;
+mod calls;
 mod channels;
 mod chat;
 mod db;
 mod dm;
+mod emojis;
 mod events;
 mod gateway;
+mod invite_page;
+mod member_list;
 mod members;
+mod onboarding;
 mod perms;
 mod pins;
 mod polls;
@@ -18,7 +24,10 @@ mod reactions;
 mod roles;
 mod search;
 mod session;
+mod settings;
 mod state;
+mod stickers;
+mod threads;
 mod uploads;
 mod voice;
 

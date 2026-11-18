@@ -8,8 +8,8 @@ use axum::{
 use flint_protocol::{ApiError, LoginRequest, RegisterRequest, TokenResponse, User};
 
 use crate::{
-    auth, bots, chat, dm, gateway, members, pins, polls, presence, reactions, search,
-    state::AppState, uploads,
+    audit, auth, bots, chat, dm, emojis, gateway, members, pins, polls, presence, reactions,
+    search, settings, state::AppState, threads, uploads,
 };
 
 pub const API_PREFIX: &str = "/api/v10";
@@ -21,7 +21,10 @@ pub fn router(state: AppState) -> Router {
         .route(&format!("{API_PREFIX}/gateway"), get(gateway_info))
         .route(&format!("{API_PREFIX}/auth/register"), post(register))
         .route(&format!("{API_PREFIX}/auth/login"), post(login))
-        .route(&format!("{API_PREFIX}/users/@me"), get(me))
+        .route(
+            &format!("{API_PREFIX}/users/@me"),
+            get(me).patch(crate::profile::edit_me),
+        )
         .route("/gateway", get(gateway_socket))
         .merge(chat::routes())
         .merge(dm::routes())
@@ -31,10 +34,18 @@ pub fn router(state: AppState) -> Router {
         .merge(reactions::routes())
         .merge(pins::routes())
         .merge(polls::routes())
+        .merge(threads::routes())
+        .merge(emojis::routes())
+        .merge(settings::routes())
+        .merge(audit::routes())
+        .merge(crate::onboarding::routes())
+        .merge(crate::stickers::routes())
         .merge(search::routes())
         .merge(crate::profile::routes())
         .merge(crate::roles::routes())
         .merge(bots::routes())
+        .merge(crate::calls::routes())
+        .merge(crate::invite_page::routes())
         .layer(axum::extract::DefaultBodyLimit::max(
             uploads::max_file_bytes() as usize * uploads::MAX_FILES + 1024 * 1024,
         ))

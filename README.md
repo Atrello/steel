@@ -14,7 +14,7 @@ deploy/                 Dockerfile, docker-compose.yml, example env file
 
 ## Status
 
-Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.py`, `scripts/dm_smoke_test.py`, `scripts/presence_smoke_test.py`, `scripts/upload_smoke_test.py`, `scripts/resume_smoke_test.py`, `scripts/staged_upload_smoke_test.py`, `scripts/members_smoke_test.py`, `scripts/phase2_smoke_test.py`, `scripts/polls_smoke_test.py`, `scripts/bots_smoke_test.py`. Implemented so far:
+Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.py`, `scripts/dm_smoke_test.py`, `scripts/presence_smoke_test.py`, `scripts/upload_smoke_test.py`, `scripts/resume_smoke_test.py`, `scripts/staged_upload_smoke_test.py`, `scripts/members_smoke_test.py`, `scripts/phase2_smoke_test.py`, `scripts/polls_smoke_test.py`, `scripts/bots_smoke_test.py`, `scripts/threads_smoke_test.py`, `scripts/member_list_smoke_test.py`, `scripts/emojis_smoke_test.py`, `scripts/bots_context_smoke_test.py`, `scripts/invite_page_smoke_test.py`. Implemented so far:
 
 - Accounts: `POST /api/v10/auth/register`, `POST /api/v10/auth/login`, `GET /api/v10/users/@me`
 - Argon2id password hashes; opaque bearer tokens stored only as SHA-256 hashes
@@ -36,9 +36,16 @@ Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.p
 - Reactions: add and remove your own (`PUT`/`DELETE .../reactions/{emoji}/@me`), remove another user's (guild owner), list who reacted, clear all (owner). Messages carry `reactions` with count and `me`. Events: `MESSAGE_REACTION_ADD`, `MESSAGE_REACTION_REMOVE`, `MESSAGE_REACTION_REMOVE_ALL`. Up to 20 distinct emoji per message.
 - Pins: list (`GET .../messages/pins`, paged by `before`), pin and unpin (`PUT`/`DELETE .../messages/pins/{id}`). Guild owner pins in guilds; any DM participant pins in DMs. Up to 50 per channel. Event: `CHANNEL_PINS_UPDATE`.
 - Polls: create with `poll` on a message (2 to 10 answers, 1 to 768 hours, optional multiselect); vote with `PUT .../polls/{id}/answers/@me`; the author ends it with `POST .../polls/{id}/expire`. Messages carry `poll` with counts and `me_voted`. Events: `MESSAGE_POLL_VOTE_ADD`, `MESSAGE_POLL_VOTE_REMOVE`.
+- Threads: start from a message (`POST .../messages/{id}/threads`, one per message, id = message id) or standalone (`POST .../channels/{id}/threads`, public only). Listed in `GET /guilds/{id}/threads/active`; events `THREAD_CREATE`. Thread members, private threads, and archiving are not implemented yet.
+- Member list: Flint's op 37 subscription (`channels: {channel_id: [[start, end]]}`) gets `GUILD_MEMBER_LIST_UPDATE` SYNC ops on the same socket. One `everyone` list sorted by username, all in the `offline` group. Non-members get nothing. Presence groups are not included yet.
+- Forums: a forum is a channel of type 15. `POST /channels/{id}/threads` on a forum creates a post with a required `message.content` starter (the post id equals the starter message id). `GET /channels/{id}/threads/search` lists open posts newest first, with `first_messages`. Forum posts are threads, so `THREAD_CREATE` and the guild active list cover them. Tags and sort orders other than newest activity are not implemented yet.
+- Custom emoji: `GET/POST /guilds/{id}/emojis` (PNG or GIF data URI, up to 256 KiB, 50 per guild, `MANAGE_GUILD`), `PATCH`/`DELETE /guilds/{id}/emojis/{id}`. Images are served from `/cdn/emojis/{id}.{ext}`. Event `GUILD_EMOJIS_UPDATE` carries the full list. Stickers are not implemented yet.
+- Profiles: `PATCH /users/@me` edits the display name (32 characters), bio (190), pronouns (40) and accent color (24-bit RGB). Absent fields stay; `null` clears. `GET /users/{id}/profile` returns them, with `USER_UPDATE` to the user. Banners and connections are not stored yet.
+- Settings: `GET`/`PATCH /users/@me/settings-proto/{kind}` (kinds 1 and 2). Steel stores the base64 protobuf opaquely. A write must send the current data version (field 1) as `required_data_version`, or it gets 409 with `out_of_date` and the current blob. Writes fire `USER_SETTINGS_PROTO_UPDATE` to the user's sessions. Not yet in READY.
+- Audit log: `GET /guilds/{id}/audit-logs` (needs `VIEW_AUDIT_LOG`, bit 7), with `limit`, `before`, `user_id` and `action_type`. Entries are written for kicks, bans and unbans, channel create and delete, and emoji create, update and delete. Discord action numbers are used.
 - Search: `GET /guilds/{id}/messages/search` and `GET /channels/{id}/messages/search` with `content`, `limit`, `offset`. Case-insensitive substring, newest first.
 
-Not yet implemented: threads, forums, member list, emoji and stickers, profiles and settings, audit log, moderation beyond kick and ban, onboarding, roles and permissions, mention counts, voice-related member fields (mute, deafen).
+Not yet implemented:, emoji and stickers, profiles and settings, audit log, moderation beyond kick and ban, onboarding, roles and permissions, mention counts, voice-related member fields (mute, deafen).
 
 ## Run locally
 
@@ -80,4 +87,8 @@ Databases created by commits between `136f9a6` and `4f36470` were built with an 
 - Interactions: Flint submits `POST /interactions` (commands, components, modal submits). Steel sends the bot `INTERACTION_CREATE`. The bot answers with `POST /interactions/{id}/{token}/callback` (messages, deferred, update, modal) and then followups under `/webhooks/{app}/{token}`, all valid for 15 minutes.
 - Bot messages can carry components and an ephemeral flag (64), which reaches only the invoking user.
 - Example bot: `examples/echo-bot/`. Smoke test: `scripts/bots_smoke_test.py`. Flint-side check: `cargo run --bin bots` in `scripts/flint_e2e` (needs steeld on 127.0.0.1:8080).
-- Not yet: autocomplete (Flint sends no autocomplete request), bot DMs, and user-installed apps.
+- Autocomplete: an option with `autocomplete: true` gets `INTERACTION_CREATE` (type 4) when a member types. The bot answers with `callback` type 8 and the choices go back to the invoker as `INTERACTION_AUTOCOMPLETE_RESULT`.
+- Bot DMs: a user opens a DM with the bot (`POST /users/@me/channels`), sees its global commands in the DM index, and runs them there.
+- User installs: `PUT /users/@me/applications/{app}` installs an application for yourself. Its global commands then work in your DMs and guilds, without the bot in the guild. `DELETE` removes it.
+- Smoke tests: `scripts/bots_context_smoke_test.py` covers bot DMs, autocomplete and user installs.
+- Flint's client already requests the command index for DMs with a bot. It has no autocomplete request and no way to see user installs yet, so those two need client work.

@@ -8,6 +8,7 @@ use crate::{api::api_error, chat::ApiResult, state::AppState};
 
 pub const CREATE_INSTANT_INVITE: u64 = 1 << 0;
 pub const KICK_MEMBERS: u64 = 1 << 1;
+pub const VIEW_AUDIT_LOG: u64 = 1 << 7;
 pub const BAN_MEMBERS: u64 = 1 << 2;
 pub const ADMINISTRATOR: u64 = 1 << 3;
 pub const MANAGE_CHANNELS: u64 = 1 << 4;

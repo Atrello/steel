@@ -16,6 +16,8 @@ pub mod op {
     pub const INVALID_SESSION: u8 = 9;
     pub const HELLO: u8 = 10;
     pub const HEARTBEAT_ACK: u8 = 11;
+    /// Guild subscriptions: member list ranges and typing (Flint sends this as op 37).
+    pub const GUILD_SUBSCRIBE: u8 = 37;
 }
 
 /// A gateway frame in either direction.
@@ -166,6 +168,19 @@ pub struct Channel {
     /// Participants of a DM or group DM. Empty for guild channels.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recipients: Vec<User>,
+    /// Set on threads (types 10 to 12) only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thread_metadata: Option<ThreadMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ThreadMetadata {
+    pub archived: bool,
+    pub auto_archive_duration: u32,
+    /// RFC 3339 time of the last archive change, or thread creation.
+    pub archive_timestamp: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -271,6 +286,17 @@ pub struct Message {
     pub components: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poll: Option<Poll>,
+    /// Stickers sent with the message, in send order.
+    #[serde(default)]
+    pub sticker_items: Vec<StickerItem>,
+}
+
+/// A sticker as it appears on a message: id, name and Discord's format type.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StickerItem {
+    pub id: String,
+    pub name: String,
+    pub format_type: u8,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -380,6 +406,9 @@ pub struct CreateMessage {
     pub components: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poll: Option<CreatePoll>,
+    /// Guild stickers to send with the message, at most three.
+    #[serde(default)]
+    pub sticker_ids: Vec<String>,
 }
 
 /// Reference to an uploaded file, as sent in a message's `attachments`.
@@ -465,4 +494,24 @@ pub struct PresenceUpdate {
     pub afk: bool,
     #[serde(default)]
     pub activities: Vec<serde_json::Value>,
+}
+
+/// Body of `POST /channels/{id}/threads` and `POST /channels/{id}/messages/{id}/threads`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateThread {
+    pub name: String,
+    #[serde(rename = "type", default)]
+    pub kind: Option<u8>,
+    #[serde(default)]
+    pub auto_archive_duration: Option<u32>,
+    /// Forum posts: the starter message. Required in forums, ignored elsewhere.
+    #[serde(default)]
+    pub message: Option<StarterMessage>,
+}
+
+/// Starter message of a forum post.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StarterMessage {
+    #[serde(default)]
+    pub content: String,
 }
