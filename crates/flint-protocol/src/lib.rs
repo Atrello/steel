@@ -490,4 +490,14 @@ pub struct CreateThread {
     pub kind: Option<u8>,
     #[serde(default)]
     pub auto_archive_duration: Option<u32>,
+    /// Forum posts: the starter message. Required in forums, ignored elsewhere.
+    #[serde(default)]
+    pub message: Option<StarterMessage>,
+}
+
+/// Starter message of a forum post.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StarterMessage {
+    #[serde(default)]
+    pub content: String,
 }
