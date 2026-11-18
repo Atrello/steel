@@ -263,6 +263,80 @@ pub struct Message {
     pub attachments: Vec<Attachment>,
     #[serde(default)]
     pub reactions: Vec<Reaction>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poll: Option<Poll>,
+}
+
+/// A poll attached to a message: `poll` on the message object.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Poll {
+    pub question: PollText,
+    pub answers: Vec<PollAnswer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expiry: Option<String>,
+    pub allow_multiselect: bool,
+    pub layout_type: u8,
+    pub results: PollResults,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PollText {
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PollAnswer {
+    pub answer_id: u32,
+    pub poll_media: PollMedia,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PollMedia {
+    #[serde(default)]
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emoji: Option<ReactionEmoji>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PollResults {
+    pub is_finalized: bool,
+    pub answer_counts: Vec<PollCount>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PollCount {
+    pub id: u32,
+    pub count: u32,
+    pub me_voted: bool,
+}
+
+/// Poll in a create-message request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreatePoll {
+    pub question: PollText,
+    pub answers: Vec<CreatePollAnswer>,
+    /// Hours the poll stays open.
+    pub duration: u16,
+    #[serde(default)]
+    pub allow_multiselect: bool,
+    #[serde(default = "default_layout")]
+    pub layout_type: u8,
+}
+
+fn default_layout() -> u8 {
+    1
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreatePollAnswer {
+    pub poll_media: PollMedia,
+}
+
+/// Body of `PUT /channels/{id}/polls/{id}/answers/@me`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PollVote {
+    pub answer_ids: Vec<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -291,6 +365,8 @@ pub struct CreateMessage {
     /// Files staged with `POST /channels/{id}/attachments` and uploaded to their `upload_url`.
     #[serde(default)]
     pub attachments: Vec<UploadRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poll: Option<CreatePoll>,
 }
 
 /// Reference to an uploaded file, as sent in a message's `attachments`.

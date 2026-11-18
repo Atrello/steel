@@ -105,15 +105,15 @@ pub struct ChannelRow {
 
 #[derive(sqlx::FromRow)]
 pub struct MessageRow {
-    id: String,
-    channel_id: String,
-    author_id: String,
-    username: String,
-    content: String,
-    created_at: String,
-    edited_at: Option<String>,
-    reply_to_id: Option<String>,
-    guild_id: Option<String>,
+    pub(crate) id: String,
+    pub(crate) channel_id: String,
+    pub(crate) author_id: String,
+    pub(crate) username: String,
+    pub(crate) content: String,
+    pub(crate) created_at: String,
+    pub(crate) edited_at: Option<String>,
+    pub(crate) reply_to_id: Option<String>,
+    pub(crate) guild_id: Option<String>,
 }
 
 fn internal(err: impl std::fmt::Display) -> Response {
@@ -408,6 +408,7 @@ pub fn message_json(row: MessageRow) -> Message {
         kind: 0,
         attachments: Vec::new(),
         reactions: Vec::new(),
+        poll: None,
     }
 }
 
@@ -656,6 +657,7 @@ async fn list_messages(
         let mut messages: Vec<Message> = rows.into_iter().map(message_json).collect();
         uploads::hydrate(&state, &mut messages).await.map_err(db)?;
         crate::reactions::hydrate(&state, &user.id, &mut messages).await.map_err(db)?;
+        crate::polls::hydrate(&state, &user.id, &mut messages).await.map_err(db)?;
         Ok(Json(messages).into_response())
     }
     .await;
@@ -696,7 +698,10 @@ async fn send_message(
         if content.chars().count() > MAX_CONTENT {
             return Err(api_error(StatusCode::BAD_REQUEST, 50035, format!("content must be at most {MAX_CONTENT} characters")));
         }
-        if content.trim().is_empty() && files.is_empty() && claimed.is_empty() {
+        if let Some(poll) = &payload.poll {
+            crate::polls::validate(poll)?;
+        }
+        if content.trim().is_empty() && files.is_empty() && claimed.is_empty() && payload.poll.is_none() {
             return Err(api_error(StatusCode::BAD_REQUEST, 50035, "a message needs content or a file"));
         }
         let reply_to = match payload.message_reference.as_ref().and_then(|r| r.message_id.clone()) {
@@ -715,6 +720,12 @@ async fn send_message(
         sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(&message_id).bind(&channel_id).bind(&user.id).bind(&content).bind(reply_to).bind(&now)
             .execute(&state.db).await.map_err(db)?;
+        if let Some(poll) = &payload.poll {
+            if let Err(e) = crate::polls::create(&state, &message_id, poll).await {
+                let _ = sqlx::query("DELETE FROM messages WHERE id = ?").bind(&message_id).execute(&state.db).await;
+                return Err(db(e));
+            }
+        }
         if !claimed.is_empty() {
             uploads::attach_claimed(&state, &channel_id, &message_id, &claimed).await.map_err(db)?;
         }
@@ -730,6 +741,7 @@ async fn send_message(
         let mut out = vec![message_json(message_by_id(&state, &message_id).await?)];
         uploads::hydrate(&state, &mut out).await.map_err(db)?;
         crate::reactions::hydrate(&state, &user.id, &mut out).await.map_err(db)?;
+        crate::polls::hydrate(&state, &user.id, &mut out).await.map_err(db)?;
         let message = out.remove(0);
         let targets = channel_audience(&state, &channel).await.map_err(db)?;
         state.publish(targets, "MESSAGE_CREATE", serde_json::to_value(&message).unwrap_or_default());
@@ -805,6 +817,7 @@ async fn read_multipart(
             content: String::new(),
             message_reference: None,
             attachments: Vec::new(),
+            poll: None,
         }),
         files,
     ))
@@ -843,6 +856,9 @@ async fn edit_message(
         let mut out = vec![message_json(message_by_id(&state, &message_id).await?)];
         uploads::hydrate(&state, &mut out).await.map_err(db)?;
         crate::reactions::hydrate(&state, &user.id, &mut out)
+            .await
+            .map_err(db)?;
+        crate::polls::hydrate(&state, &user.id, &mut out)
             .await
             .map_err(db)?;
         let message = out.remove(0);
