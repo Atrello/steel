@@ -8,7 +8,8 @@ use axum::{
 use flint_protocol::{ApiError, LoginRequest, RegisterRequest, TokenResponse, User};
 
 use crate::{
-    auth, chat, dm, gateway, members, pins, presence, reactions, search, state::AppState, uploads,
+    auth, bots, chat, dm, gateway, members, pins, presence, reactions, search, state::AppState,
+    uploads,
 };
 
 pub const API_PREFIX: &str = "/api/v10";
@@ -32,6 +33,7 @@ pub fn router(state: AppState) -> Router {
         .merge(search::routes())
         .merge(crate::profile::routes())
         .merge(crate::roles::routes())
+        .merge(bots::routes())
         .layer(axum::extract::DefaultBodyLimit::max(
             uploads::max_file_bytes() as usize * uploads::MAX_FILES + 1024 * 1024,
         ))
@@ -186,23 +188,28 @@ pub async fn user_from_headers(
     let Some(value) = headers.get(AUTHORIZATION).and_then(|v| v.to_str().ok()) else {
         return Ok(None);
     };
-    let token = value.strip_prefix("Bearer ").unwrap_or(value);
-    user_from_token(state, token).await
+    user_from_token(state, value).await
 }
 
+/// Resolve a token to its user. Accepts `Bot <token>` (bot accounts), `Bearer <token>`, or a bare token.
 pub async fn user_from_token(state: &AppState, token: &str) -> Result<Option<User>, sqlx::Error> {
-    let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT u.id, u.username FROM tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?",
+    let token = token
+        .strip_prefix("Bot ")
+        .or_else(|| token.strip_prefix("Bearer "))
+        .unwrap_or(token);
+    let row: Option<(String, String, bool)> = sqlx::query_as(
+        "SELECT u.id, u.username, EXISTS (SELECT 1 FROM applications a WHERE a.bot_user_id = u.id) \
+         FROM tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?",
     )
     .bind(auth::hash_token(token))
     .fetch_optional(&state.db)
     .await?;
-    Ok(row.map(|(id, username)| User {
+    Ok(row.map(|(id, username, bot)| User {
         id,
         username,
         global_name: None,
         avatar: None,
-        bot: false,
+        bot,
     }))
 }
 
