@@ -15,6 +15,8 @@ use crate::{
     state::AppState,
 };
 
+/// Client request to join, move or leave a voice channel.
+const VOICE_STATE_UPDATE: u8 = 4;
 pub const HEARTBEAT_INTERVAL_MS: u64 = 41_250;
 /// Close the socket if no heartbeat arrives within this window.
 const HEARTBEAT_GRACE: Duration = Duration::from_millis(HEARTBEAT_INTERVAL_MS * 2);
@@ -178,6 +180,9 @@ async fn serve(
                                     state.presence.set_status(&user.id, &update.status);
                                     presence::broadcast_presence(state, &user.id).await;
                                 }
+                            }
+                            VOICE_STATE_UPDATE => {
+                                crate::voice::gateway_state(state, &user, &session.id, frame.d).await;
                             }
                             op::GUILD_SUBSCRIBE => {
                                 let mut failed = false;

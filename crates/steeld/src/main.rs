@@ -29,6 +29,7 @@ mod state;
 mod stickers;
 mod threads;
 mod uploads;
+mod voice;
 
 use std::net::SocketAddr;
 
@@ -49,6 +50,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let db = db::connect(&database_url).await?;
     let state = state::AppState::new(db);
+    let voice_port = state.voice.config.port;
+    let voice_socket = tokio::net::UdpSocket::bind(("0.0.0.0", voice_port)).await?;
+    tracing::info!("Voice media on UDP {voice_port}");
+    tokio::spawn(voice::udp::serve(voice_socket, state.voice.clone()));
     let app = api::router(state);
 
     tracing::info!("Steel is listening on {bind}");
