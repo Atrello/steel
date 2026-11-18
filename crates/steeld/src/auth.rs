@@ -43,3 +43,9 @@ pub fn new_id() -> String {
     let noise = rand::thread_rng().next_u32() as u64 & 0x3F_FFFF;
     ((ts << 22) | noise).to_string()
 }
+
+/// A random numeric ID for attachments. Clients parse IDs as numbers, and the value is unguessable.
+pub fn new_random_numeric_id() -> String {
+    let n = rand::thread_rng().next_u64() & (i64::MAX as u64);
+    n.max(1).to_string()
+}

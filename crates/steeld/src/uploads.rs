@@ -77,7 +77,7 @@ pub async fn store(
     message_id: &str,
     file: PendingFile,
 ) -> Result<Attachment, Response> {
-    let id = auth::new_token();
+    let id = auth::new_random_numeric_id();
     let filename = sanitize_filename(&file.filename);
     let rel = format!("attachments/{channel_id}/{id}/{filename}");
     let full = data_dir().join(&rel);
@@ -406,7 +406,7 @@ pub async fn attach_claimed(
     let mut tx = state.db.begin().await?;
     for c in claimed {
         sqlx::query("INSERT INTO attachments (id, message_id, channel_id, filename, content_type, size, path) VALUES (?, ?, ?, ?, ?, ?, ?)")
-            .bind(&c.token)
+            .bind(auth::new_random_numeric_id())
             .bind(message_id)
             .bind(channel_id)
             .bind(&c.filename)
