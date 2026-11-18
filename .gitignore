@@ -1,3 +1,5 @@
 /target
 *.db
 *.db-*
+scripts/flint_e2e/target/
+scripts/flint_e2e/Cargo.lock
