@@ -263,8 +263,18 @@ pub struct Message {
     pub attachments: Vec<Attachment>,
     #[serde(default)]
     pub reactions: Vec<Reaction>,
+    /// Message flags. 64 marks an ephemeral message, visible only to the invoking user.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub flags: u32,
+    /// Bot message components (action rows of buttons or menus), passed through as sent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poll: Option<Poll>,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 /// A poll attached to a message: `poll` on the message object.
@@ -365,6 +375,9 @@ pub struct CreateMessage {
     /// Files staged with `POST /channels/{id}/attachments` and uploaded to their `upload_url`.
     #[serde(default)]
     pub attachments: Vec<UploadRef>,
+    /// Components, accepted from bot accounts only.
+    #[serde(default)]
+    pub components: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poll: Option<CreatePoll>,
 }
@@ -410,6 +423,14 @@ pub struct StagedUploads {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EditMessage {
     pub content: String,
+}
+
+/// Body of `POST /applications` (bot account creation).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateApplication {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -14,7 +14,7 @@ deploy/                 Dockerfile, docker-compose.yml, example env file
 
 ## Status
 
-Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.py`, `scripts/dm_smoke_test.py`, `scripts/presence_smoke_test.py`, `scripts/upload_smoke_test.py`, `scripts/resume_smoke_test.py`, `scripts/staged_upload_smoke_test.py`, `scripts/members_smoke_test.py`, `scripts/phase2_smoke_test.py`, `scripts/polls_smoke_test.py`. Implemented so far:
+Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.py`, `scripts/dm_smoke_test.py`, `scripts/presence_smoke_test.py`, `scripts/upload_smoke_test.py`, `scripts/resume_smoke_test.py`, `scripts/staged_upload_smoke_test.py`, `scripts/members_smoke_test.py`, `scripts/phase2_smoke_test.py`, `scripts/polls_smoke_test.py`, `scripts/bots_smoke_test.py`. Implemented so far:
 
 - Accounts: `POST /api/v10/auth/register`, `POST /api/v10/auth/login`, `GET /api/v10/users/@me`
 - Argon2id password hashes; opaque bearer tokens stored only as SHA-256 hashes
@@ -70,3 +70,14 @@ To change the schema, add the next numbered file. Never edit a migration that ha
 Version numbers are reserved per branch so parallel work does not collide: `0001`–`0003` are the baseline schema, `0004`–`0099` belong to the Steel core, `0100`–`0199` to text features, `0200`–`0299` to voice, and `0300`–`0399` to bots. Gaps are fine, and a lower version merged later still runs once. A database may hold migrations this binary does not ship, which startup tolerates.
 
 Databases created by commits between `136f9a6` and `4f36470` were built with an earlier runner that had no migration record. Recreate those dev databases rather than upgrading them.
+
+## Bots and slash commands
+
+- Bot accounts: `POST /api/v10/applications` creates an application and its bot user and returns the bot token once. `POST /applications/{id}/bot/reset` issues a new token. Authenticate as `Authorization: Bot <token>` or with the gateway Identify token.
+- The guild owner adds a bot with `PUT /applications/{id}/guilds/{guild}`.
+- Application commands: `/applications/{id}/commands` and `/applications/{id}/guilds/{guild}/commands` (list, create, overwrite, edit, delete). Chat-input commands only.
+- Discovery: `GET /guilds/{id}/application-command-index` (also per channel), which Flint uses for the composer.
+- Interactions: Flint submits `POST /interactions` (commands, components, modal submits). Steel sends the bot `INTERACTION_CREATE`. The bot answers with `POST /interactions/{id}/{token}/callback` (messages, deferred, update, modal) and then followups under `/webhooks/{app}/{token}`, all valid for 15 minutes.
+- Bot messages can carry components and an ephemeral flag (64), which reaches only the invoking user.
+- Example bot: `examples/echo-bot/`. Smoke test: `scripts/bots_smoke_test.py`. Flint-side check: `cargo run --bin bots` in `scripts/flint_e2e` (needs steeld on 127.0.0.1:8080).
+- Not yet: autocomplete (Flint sends no autocomplete request), bot DMs, and user-installed apps.

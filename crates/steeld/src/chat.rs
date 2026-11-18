@@ -105,15 +105,18 @@ pub struct ChannelRow {
 
 #[derive(sqlx::FromRow)]
 pub struct MessageRow {
-    pub(crate) id: String,
-    pub(crate) channel_id: String,
-    pub(crate) author_id: String,
-    pub(crate) username: String,
-    pub(crate) content: String,
-    pub(crate) created_at: String,
-    pub(crate) edited_at: Option<String>,
-    pub(crate) reply_to_id: Option<String>,
-    pub(crate) guild_id: Option<String>,
+    pub id: String,
+    pub channel_id: String,
+    pub author_id: String,
+    pub username: String,
+    pub content: String,
+    pub created_at: String,
+    pub edited_at: Option<String>,
+    pub reply_to_id: Option<String>,
+    pub guild_id: Option<String>,
+    pub bot: bool,
+    pub flags: i64,
+    pub components: String,
 }
 
 fn internal(err: impl std::fmt::Display) -> Response {
@@ -141,7 +144,7 @@ pub fn missing_member() -> Response {
     api_error(StatusCode::NOT_FOUND, 10007, "Unknown Member")
 }
 
-fn missing(what: &str) -> Response {
+pub fn missing(what: &str) -> Response {
     api_error(StatusCode::NOT_FOUND, 10003, format!("Unknown {what}"))
 }
 
@@ -395,7 +398,7 @@ pub fn message_json(row: MessageRow) -> Message {
             username: row.username,
             global_name: None,
             avatar: None,
-            bot: false,
+            bot: row.bot,
         },
         content: row.content,
         timestamp: row.created_at,
@@ -408,12 +411,18 @@ pub fn message_json(row: MessageRow) -> Message {
         kind: 0,
         attachments: Vec::new(),
         reactions: Vec::new(),
+        flags: row.flags as u32,
+        components: serde_json::from_str(&row.components).unwrap_or_default(),
         poll: None,
     }
 }
 
 pub const MESSAGE_SELECT: &str = "SELECT m.id, m.channel_id, m.author_id, u.username, m.content, m.created_at, m.edited_at, \
-     m.reply_to_id, c.guild_id FROM messages m JOIN users u ON u.id = m.author_id JOIN channels c ON c.id = m.channel_id";
+     m.reply_to_id, c.guild_id, \
+     EXISTS (SELECT 1 FROM applications a WHERE a.bot_user_id = m.author_id) AS bot, \
+     COALESCE((SELECT e.flags FROM message_extras e WHERE e.message_id = m.id), 0) AS flags, \
+     COALESCE((SELECT e.components FROM message_extras e WHERE e.message_id = m.id), '[]') AS components \
+     FROM messages m JOIN users u ON u.id = m.author_id JOIN channels c ON c.id = m.channel_id";
 
 pub async fn message_by_id(state: &AppState, message_id: &str) -> ApiResult<MessageRow> {
     sqlx::query_as(&format!("{MESSAGE_SELECT} WHERE m.id = ?"))
@@ -655,6 +664,7 @@ async fn list_messages(
             .fetch_all(&state.db).await.map_err(db)?,
         };
         let mut messages: Vec<Message> = rows.into_iter().map(message_json).collect();
+        crate::bots::hide_ephemeral(&state, &user.id, &mut messages).await.map_err(db)?;
         uploads::hydrate(&state, &mut messages).await.map_err(db)?;
         crate::reactions::hydrate(&state, &user.id, &mut messages).await.map_err(db)?;
         crate::polls::hydrate(&state, &user.id, &mut messages).await.map_err(db)?;
@@ -695,6 +705,10 @@ async fn send_message(
         };
 
         let content = payload.content.trim_end().to_string();
+        let components = payload.components.clone();
+        if !components.is_empty() && !crate::bots::is_bot(&state, &user.id).await.map_err(db)? {
+            return Err(api_error(StatusCode::BAD_REQUEST, 50035, "only bot accounts can send components"));
+        }
         if content.chars().count() > MAX_CONTENT {
             return Err(api_error(StatusCode::BAD_REQUEST, 50035, format!("content must be at most {MAX_CONTENT} characters")));
         }
@@ -720,6 +734,9 @@ async fn send_message(
         sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(&message_id).bind(&channel_id).bind(&user.id).bind(&content).bind(reply_to).bind(&now)
             .execute(&state.db).await.map_err(db)?;
+        if !components.is_empty() {
+            crate::bots::store_extras(&state, &message_id, 0, &components, None).await.map_err(db)?;
+        }
         if let Some(poll) = &payload.poll {
             if let Err(e) = crate::polls::create(&state, &message_id, poll).await {
                 let _ = sqlx::query("DELETE FROM messages WHERE id = ?").bind(&message_id).execute(&state.db).await;
@@ -817,6 +834,7 @@ async fn read_multipart(
             content: String::new(),
             message_reference: None,
             attachments: Vec::new(),
+            components: Vec::new(),
             poll: None,
         }),
         files,
