@@ -114,7 +114,7 @@ pub struct MessageRow {
     pub edited_at: Option<String>,
     pub reply_to_id: Option<String>,
     pub guild_id: Option<String>,
-    pub bot: bool,
+    pub bot: i64,
     pub flags: i64,
     pub components: String,
 }
@@ -180,9 +180,9 @@ pub async fn require_channel(
     match &channel.guild_id {
         Some(guild_id) => require_member(state, guild_id, user_id).await,
         None => {
-            let found: Option<(i64,)> = sqlx::query_as(
+            let found: Option<(i64,)> = sqlx::query_as(&crate::db::sql(
                 "SELECT 1 FROM channel_recipients WHERE channel_id = ? AND user_id = ?",
-            )
+            ))
             .bind(&channel.id)
             .bind(user_id)
             .fetch_optional(&state.db)
@@ -201,40 +201,44 @@ pub async fn channel_audience(
     match &channel.guild_id {
         Some(guild_id) => member_ids(state, guild_id).await,
         None => {
-            let rows: Vec<(String,)> =
-                sqlx::query_as("SELECT user_id FROM channel_recipients WHERE channel_id = ?")
-                    .bind(&channel.id)
-                    .fetch_all(&state.db)
-                    .await?;
+            let rows: Vec<(String,)> = sqlx::query_as(&crate::db::sql(
+                "SELECT user_id FROM channel_recipients WHERE channel_id = ?",
+            ))
+            .bind(&channel.id)
+            .fetch_all(&state.db)
+            .await?;
             Ok(rows.into_iter().map(|(id,)| id).collect())
         }
     }
 }
 
 pub async fn require_member(state: &AppState, guild_id: &str, user_id: &str) -> ApiResult<()> {
-    let found: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?")
-            .bind(guild_id)
-            .bind(user_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(db)?;
+    let found: Option<(i64,)> = sqlx::query_as(&crate::db::sql(
+        "SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?",
+    ))
+    .bind(guild_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(db)?;
     found.map(|_| ()).ok_or_else(no_access)
 }
 
 pub async fn guild_row(state: &AppState, guild_id: &str) -> ApiResult<GuildRow> {
-    sqlx::query_as("SELECT id, name, owner_id FROM guilds WHERE id = ?")
-        .bind(guild_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(db)?
-        .ok_or_else(|| missing("guild"))
+    sqlx::query_as(&crate::db::sql(
+        "SELECT id, name, owner_id FROM guilds WHERE id = ?",
+    ))
+    .bind(guild_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(db)?
+    .ok_or_else(|| missing("guild"))
 }
 
 pub async fn channel_row(state: &AppState, channel_id: &str) -> ApiResult<ChannelRow> {
-    sqlx::query_as(
+    sqlx::query_as(&crate::db::sql(
         "SELECT id, guild_id, kind, name, topic, position, parent_id FROM channels WHERE id = ?",
-    )
+    ))
     .bind(channel_id)
     .fetch_optional(&state.db)
     .await
@@ -246,7 +250,7 @@ pub async fn channel_row(state: &AppState, channel_id: &str) -> ApiResult<Channe
 pub async fn channel_json(state: &AppState, row: ChannelRow) -> ApiResult<Channel> {
     let recipients = if row.guild_id.is_none() {
         let users: Vec<(String, String)> = sqlx::query_as(
-            "SELECT u.id, u.username FROM channel_recipients r JOIN users u ON u.id = r.user_id WHERE r.channel_id = ? ORDER BY CAST(u.id AS INTEGER)",
+            &crate::db::sql("SELECT u.id, u.username FROM channel_recipients r JOIN users u ON u.id = r.user_id WHERE r.channel_id = ? ORDER BY CAST(u.id AS BIGINT)"),
         )
         .bind(&row.id)
         .fetch_all(&state.db)
@@ -290,7 +294,7 @@ async fn guild_channel_rows(
     guild_id: &str,
 ) -> Result<Vec<ChannelRow>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT id, guild_id, kind, name, topic, position, parent_id FROM channels WHERE guild_id = ? ORDER BY position, CAST(id AS INTEGER)",
+        &crate::db::sql("SELECT id, guild_id, kind, name, topic, position, parent_id FROM channels WHERE guild_id = ? ORDER BY position, CAST(id AS BIGINT)"),
     )
     .bind(guild_id)
     .fetch_all(&state.db)
@@ -353,20 +357,21 @@ pub async fn guild_json(state: &AppState, row: GuildRow, with_channels: bool) ->
 }
 
 pub async fn member_ids(state: &AppState, guild_id: &str) -> Result<Vec<String>, sqlx::Error> {
-    let rows: Vec<(String,)> =
-        sqlx::query_as("SELECT user_id FROM guild_members WHERE guild_id = ?")
-            .bind(guild_id)
-            .fetch_all(&state.db)
-            .await?;
+    let rows: Vec<(String,)> = sqlx::query_as(&crate::db::sql(
+        "SELECT user_id FROM guild_members WHERE guild_id = ?",
+    ))
+    .bind(guild_id)
+    .fetch_all(&state.db)
+    .await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
 /// Guilds the user belongs to, with their channels. Used by READY.
 pub async fn guilds_for_user(state: &AppState, user_id: &str) -> Result<Vec<Guild>, sqlx::Error> {
-    let rows: Vec<GuildRow> = sqlx::query_as(
+    let rows: Vec<GuildRow> = sqlx::query_as(&crate::db::sql(
         "SELECT g.id, g.name, g.owner_id FROM guilds g JOIN guild_members m ON m.guild_id = g.id \
-         WHERE m.user_id = ? ORDER BY CAST(g.id AS INTEGER)",
-    )
+         WHERE m.user_id = ? ORDER BY CAST(g.id AS BIGINT)",
+    ))
     .bind(user_id)
     .fetch_all(&state.db)
     .await?;
@@ -398,7 +403,7 @@ pub fn message_json(row: MessageRow) -> Message {
             username: row.username,
             global_name: None,
             avatar: None,
-            bot: row.bot,
+            bot: row.bot != 0,
         },
         content: row.content,
         timestamp: row.created_at,
@@ -425,7 +430,7 @@ pub const MESSAGE_SELECT: &str = "SELECT m.id, m.channel_id, m.author_id, u.user
      FROM messages m JOIN users u ON u.id = m.author_id JOIN channels c ON c.id = m.channel_id";
 
 pub async fn message_by_id(state: &AppState, message_id: &str) -> ApiResult<MessageRow> {
-    sqlx::query_as(&format!("{MESSAGE_SELECT} WHERE m.id = ?"))
+    sqlx::query_as(&crate::db::sql(&format!("{MESSAGE_SELECT} WHERE m.id = ?")))
         .bind(message_id)
         .fetch_optional(&state.db)
         .await
@@ -474,25 +479,29 @@ async fn create_guild_inner(
     let now = now_iso();
 
     let mut tx = state.db.begin().await.map_err(db)?;
-    sqlx::query("INSERT INTO guilds (id, name, owner_id, created_at) VALUES (?, ?, ?, ?)")
-        .bind(&guild_id)
-        .bind(&name)
-        .bind(&user.id)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-    sqlx::query("INSERT INTO guild_members (guild_id, user_id, joined_at) VALUES (?, ?, ?)")
-        .bind(&guild_id)
-        .bind(&user.id)
-        .bind(&now)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-    sqlx::query("INSERT INTO channels (id, guild_id, kind, name, position, created_at) VALUES (?, ?, ?, 'general', 0, ?)")
+    sqlx::query(&crate::db::sql(
+        "INSERT INTO guilds (id, name, owner_id, created_at) VALUES (?, ?, ?, ?)",
+    ))
+    .bind(&guild_id)
+    .bind(&name)
+    .bind(&user.id)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(db)?;
+    sqlx::query(&crate::db::sql(
+        "INSERT INTO guild_members (guild_id, user_id, joined_at) VALUES (?, ?, ?)",
+    ))
+    .bind(&guild_id)
+    .bind(&user.id)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(db)?;
+    sqlx::query(&crate::db::sql("INSERT INTO channels (id, guild_id, kind, name, position, created_at) VALUES (?, ?, ?, 'general', 0, ?)"))
         .bind(&general_id).bind(&guild_id).bind(channel_type::GUILD_TEXT as i64).bind(&now)
         .execute(&mut *tx).await.map_err(db)?;
-    sqlx::query("INSERT INTO roles (id, guild_id, name, permissions, color, hoist, mentionable, position, created_at) VALUES (?, ?, '@everyone', ?, 0, 0, 0, 0, ?)")
+    sqlx::query(&crate::db::sql("INSERT INTO roles (id, guild_id, name, permissions, color, hoist, mentionable, position, created_at) VALUES (?, ?, '@everyone', ?, 0, 0, 0, 0, ?)"))
         .bind(&guild_id)
         .bind(&guild_id)
         .bind(crate::perms::DEFAULT_EVERYONE.to_string())
@@ -591,12 +600,12 @@ async fn create_channel(
             None => None,
         };
         let channel_id = auth::new_id();
-        let position: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(position), -1) + 1 FROM channels WHERE guild_id = ?")
+        let position: i64 = sqlx::query_scalar(&crate::db::sql("SELECT COALESCE(MAX(position), -1) + 1 FROM channels WHERE guild_id = ?"))
             .bind(&guild_id)
             .fetch_one(&state.db)
             .await
             .map_err(db)?;
-        sqlx::query("INSERT INTO channels (id, guild_id, kind, name, topic, position, parent_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query(&crate::db::sql("INSERT INTO channels (id, guild_id, kind, name, topic, position, parent_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"))
             .bind(&channel_id).bind(&guild_id).bind(kind as i64).bind(&name)
             .bind(req.topic.as_deref().filter(|t| !t.is_empty())).bind(position).bind(parent).bind(now_iso())
             .execute(&state.db).await.map_err(db)?;
@@ -651,16 +660,16 @@ async fn list_messages(
         crate::perms::require_channel_row(&state, &channel, &user.id, crate::perms::VIEW_CHANNEL).await?;
         let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
         let rows: Vec<MessageRow> = match q.before {
-            Some(before) => sqlx::query_as(&format!(
-                "{MESSAGE_SELECT} WHERE m.channel_id = ? AND CAST(m.id AS INTEGER) < CAST(? AS INTEGER) \
-                 ORDER BY CAST(m.id AS INTEGER) DESC LIMIT ?"
-            ))
-            .bind(&channel_id).bind(before).bind(limit)
+            Some(before) => sqlx::query_as(&crate::db::sql(&format!(
+                "{MESSAGE_SELECT} WHERE m.channel_id = ? AND CAST(m.id AS BIGINT) < CAST(? AS BIGINT) \
+                 ORDER BY CAST(m.id AS BIGINT) DESC LIMIT ?"
+            )))
+            .bind(&channel_id).bind(before).bind(i64::from(limit))
             .fetch_all(&state.db).await.map_err(db)?,
-            None => sqlx::query_as(&format!(
-                "{MESSAGE_SELECT} WHERE m.channel_id = ? ORDER BY CAST(m.id AS INTEGER) DESC LIMIT ?"
-            ))
-            .bind(&channel_id).bind(limit)
+            None => sqlx::query_as(&crate::db::sql(&format!(
+                "{MESSAGE_SELECT} WHERE m.channel_id = ? ORDER BY CAST(m.id AS BIGINT) DESC LIMIT ?"
+            )))
+            .bind(&channel_id).bind(i64::from(limit))
             .fetch_all(&state.db).await.map_err(db)?,
         };
         let mut messages: Vec<Message> = rows.into_iter().map(message_json).collect();
@@ -731,7 +740,7 @@ async fn send_message(
 
         let message_id = auth::new_id();
         let now = now_iso();
-        sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+        sqlx::query(&crate::db::sql("INSERT INTO messages (id, channel_id, author_id, content, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?)"))
             .bind(&message_id).bind(&channel_id).bind(&user.id).bind(&content).bind(reply_to).bind(&now)
             .execute(&state.db).await.map_err(db)?;
         if !components.is_empty() {
@@ -739,7 +748,7 @@ async fn send_message(
         }
         if let Some(poll) = &payload.poll {
             if let Err(e) = crate::polls::create(&state, &message_id, poll).await {
-                let _ = sqlx::query("DELETE FROM messages WHERE id = ?").bind(&message_id).execute(&state.db).await;
+                let _ = sqlx::query(&crate::db::sql("DELETE FROM messages WHERE id = ?")).bind(&message_id).execute(&state.db).await;
                 return Err(db(e));
             }
         }
@@ -750,7 +759,7 @@ async fn send_message(
             if let Err(e) = uploads::store(&state, &channel_id, &message_id, file).await {
                 // Do not leave a half-sent message behind.
                 let _ = uploads::remove_for_message(&state, &message_id).await;
-                let _ = sqlx::query("DELETE FROM messages WHERE id = ?").bind(&message_id).execute(&state.db).await;
+                let _ = sqlx::query(&crate::db::sql("DELETE FROM messages WHERE id = ?")).bind(&message_id).execute(&state.db).await;
                 return Err(e);
             }
         }
@@ -864,13 +873,15 @@ async fn edit_message(
                 format!("content must be 1-{MAX_CONTENT} characters"),
             ));
         }
-        sqlx::query("UPDATE messages SET content = ?, edited_at = ? WHERE id = ?")
-            .bind(&content)
-            .bind(now_iso())
-            .bind(&message_id)
-            .execute(&state.db)
-            .await
-            .map_err(db)?;
+        sqlx::query(&crate::db::sql(
+            "UPDATE messages SET content = ?, edited_at = ? WHERE id = ?",
+        ))
+        .bind(&content)
+        .bind(now_iso())
+        .bind(&message_id)
+        .execute(&state.db)
+        .await
+        .map_err(db)?;
         let mut out = vec![message_json(message_by_id(&state, &message_id).await?)];
         uploads::hydrate(&state, &mut out).await.map_err(db)?;
         crate::reactions::hydrate(&state, &user.id, &mut out)
@@ -915,7 +926,7 @@ async fn delete_message(
         uploads::remove_for_message(&state, &message_id)
             .await
             .map_err(db)?;
-        sqlx::query("DELETE FROM messages WHERE id = ?")
+        sqlx::query(&crate::db::sql("DELETE FROM messages WHERE id = ?"))
             .bind(&message_id)
             .execute(&state.db)
             .await
@@ -976,7 +987,7 @@ async fn create_invite(
             api_error(StatusCode::BAD_REQUEST, 50035, "invites are only for guild channels")
         })?;
         let code = random_code();
-        sqlx::query("INSERT INTO invites (code, guild_id, channel_id, inviter_id, created_at) VALUES (?, ?, ?, ?, ?)")
+        sqlx::query(&crate::db::sql("INSERT INTO invites (code, guild_id, channel_id, inviter_id, created_at) VALUES (?, ?, ?, ?, ?)"))
             .bind(&code).bind(&guild_id).bind(&channel_id).bind(&user.id).bind(now_iso())
             .execute(&state.db).await.map_err(db)?;
         let guild = guild_json(&state, guild_row(&state, &guild_id).await?, false).await?;
@@ -988,12 +999,14 @@ async fn create_invite(
 }
 
 async fn invite_row(state: &AppState, code: &str) -> ApiResult<(String, String)> {
-    sqlx::query_as("SELECT guild_id, channel_id FROM invites WHERE code = ?")
-        .bind(code)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(db)?
-        .ok_or_else(|| missing("invite"))
+    sqlx::query_as(&crate::db::sql(
+        "SELECT guild_id, channel_id FROM invites WHERE code = ?",
+    ))
+    .bind(code)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(db)?
+    .ok_or_else(|| missing("invite"))
 }
 
 async fn get_invite(State(state): State<AppState>, Path(code): Path<String>) -> Response {
@@ -1020,19 +1033,20 @@ async fn accept_invite(
     let result: ApiResult<Response> = async {
         let user = authed(&state, &headers).await?;
         let (guild_id, _channel_id) = invite_row(&state, &code).await?;
-        let banned: Option<(i64,)> =
-            sqlx::query_as("SELECT 1 FROM guild_bans WHERE guild_id = ? AND user_id = ?")
-                .bind(&guild_id)
-                .bind(&user.id)
-                .fetch_optional(&state.db)
-                .await
-                .map_err(db)?;
+        let banned: Option<(i64,)> = sqlx::query_as(&crate::db::sql(
+            "SELECT 1 FROM guild_bans WHERE guild_id = ? AND user_id = ?",
+        ))
+        .bind(&guild_id)
+        .bind(&user.id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(db)?;
         if banned.is_some() {
             return Err(no_access());
         }
-        sqlx::query(
+        sqlx::query(&crate::db::sql(
             "INSERT OR IGNORE INTO guild_members (guild_id, user_id, joined_at) VALUES (?, ?, ?)",
-        )
+        ))
         .bind(&guild_id)
         .bind(&user.id)
         .bind(now_iso())

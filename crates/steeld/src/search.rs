@@ -77,19 +77,19 @@ async fn run_search(
     let offset = q.offset.unwrap_or(0).min(MAX_OFFSET) as i64;
     let pattern = like_pattern(term);
 
-    let total: i64 = sqlx::query_scalar(&format!(
+    let total: i64 = sqlx::query_scalar(&crate::db::sql(&format!(
         "SELECT COUNT(*) FROM messages m JOIN channels c ON c.id = m.channel_id WHERE {scope_sql} AND m.content LIKE ? ESCAPE '\\'"
-    ))
+    )))
     .bind(scope_bind)
     .bind(&pattern)
     .fetch_one(&state.db)
     .await
     .map_err(crate::api::internal)?;
 
-    let rows: Vec<chat::MessageRow> = sqlx::query_as(&format!(
+    let rows: Vec<chat::MessageRow> = sqlx::query_as(&crate::db::sql(&format!(
         "{MESSAGE_SELECT} WHERE {scope_sql} AND m.content LIKE ? ESCAPE '\\' \
-         ORDER BY CAST(m.id AS INTEGER) DESC LIMIT ? OFFSET ?"
-    ))
+         ORDER BY CAST(m.id AS BIGINT) DESC LIMIT ? OFFSET ?"
+    )))
     .bind(scope_bind)
     .bind(&pattern)
     .bind(limit)
