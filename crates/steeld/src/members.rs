@@ -326,6 +326,7 @@ async fn edit_member(
             crate::perms::MANAGE_NICKNAMES
         };
         crate::perms::require_guild(&state, &guild_id, &me.id, needed).await?;
+        crate::perms::require_above_member(&state, &guild_id, &me.id, &user_id).await?;
         let nick = match fields.get("nick") {
             None | Some(Value::Null) => None,
             Some(Value::String(s)) => {
@@ -393,6 +394,7 @@ async fn moderation_target(
 ) -> ApiResult<User> {
     let me = chat::authed(state, headers).await?;
     crate::perms::require_guild(state, guild_id, &me.id, bit).await?;
+    crate::perms::require_above_member(state, guild_id, &me.id, user_id).await?;
     let guild = chat::guild_row(state, guild_id).await?;
     if user_id == guild.owner_id || user_id == me.id {
         return Err(api_error(

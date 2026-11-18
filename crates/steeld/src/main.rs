@@ -11,6 +11,7 @@ mod gateway;
 mod members;
 mod perms;
 mod pins;
+mod polls;
 mod presence;
 mod profile;
 mod reactions;

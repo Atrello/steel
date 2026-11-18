@@ -60,6 +60,12 @@ async fn wait_for<T>(rx: &mut Rx, label: &str, mut pick: impl FnMut(&Event) -> O
     .unwrap_or_else(|_| panic!("timed out waiting for {label}"))
 }
 
+
+/// Runs one Flint server-admin command, as its UI does.
+async fn admin(api: &DiscordApi, guild: Id, action: model::server_admin::Action, request: u64) -> Event {
+    api.execute(Command::ServerAdmin { guild, request, action: Box::new(action) }).await
+}
+
 #[tokio::main]
 async fn main() {
     model::endpoints::configure(SERVER).expect("configure server");
@@ -311,6 +317,124 @@ async fn main() {
     let (st, _) = rest("DELETE", &alice_token, &format!("/guilds/{guild_id}/roles/{guild_id}"), None).await;
     assert_eq!(st, 400, "@everyone cannot be deleted");
     step("PASS guard rails");
+
+    // ----- role hierarchy -----
+    step("hierarchy: bob (MANAGE_ROLES at a middle position) can act only below his top role");
+    let (st, mid) = rest("POST", &alice_token, &format!("/guilds/{guild_id}/roles"), Some(json!({"name": "hier-mid", "permissions": "268435456"}))).await;
+    assert!(st / 100 == 2, "create hier-mid: {mid}");
+    let mid_id = mid["id"].as_str().unwrap().to_owned();
+    let (st, high) = rest("POST", &alice_token, &format!("/guilds/{guild_id}/roles"), Some(json!({"name": "hier-high", "permissions": "0"}))).await;
+    assert!(st / 100 == 2, "create hier-high: {high}");
+    let high_id = high["id"].as_str().unwrap().to_owned();
+    let (st, _) = rest("PUT", &alice_token, &format!("/guilds/{guild_id}/members/{bob_id}/roles/{mid_id}"), None).await;
+    assert!(st / 100 == 2, "give bob hier-mid");
+    let (st, _) = rest("PATCH", &bob_token, &format!("/guilds/{guild_id}/roles/{high_id}"), Some(json!({"name": "stolen"}))).await;
+    assert_eq!(st, 403, "bob must not edit a role above his top role");
+    let (st, _) = rest("PUT", &bob_token, &format!("/guilds/{guild_id}/members/{bob_id}/roles/{high_id}"), None).await;
+    assert_eq!(st, 403, "bob must not hand out a role above his top role");
+    let (st, _) = rest("PUT", &bob_token, &format!("/guilds/{guild_id}/members/{alice_id}/roles/{mid_id}"), None).await;
+    assert_eq!(st, 403, "bob must not change the owner");
+    step("PASS hierarchy blocks edits, grants and changes to the owner");
+
+    step("hierarchy: a non-owner creates a role that sits at the bottom and can then edit it");
+    let (st, own) = rest("POST", &bob_token, &format!("/guilds/{guild_id}/roles"), Some(json!({"name": "bobs-role"}))).await;
+    assert!(st / 100 == 2, "bob creates role: {own}");
+    let own_id = own["id"].as_str().unwrap().to_owned();
+    let (st, _) = rest("PATCH", &bob_token, &format!("/guilds/{guild_id}/roles/{own_id}"), Some(json!({"name": "bobs-renamed"}))).await;
+    assert!(st / 100 == 2, "bob edits his own role: {st}");
+    step("PASS non-owner role creation and edit below the top");
+
+    // ----- Flint's own role actions (ServerAdmin commands) -----
+    use model::server_admin::Action as AdminAction;
+    use model::server_roles::{Action as RoleAction, Edit as RoleEdit};
+    use model::Patch;
+    let empty_edit = |name: Option<String>, permissions: Option<u128>, hoist: Option<bool>| RoleEdit {
+        name,
+        colors: None,
+        permissions,
+        permission_mask: if permissions.is_some() { u128::MAX } else { 0 },
+        hoist,
+        mentionable: None,
+        icon: Patch::Absent,
+        unicode_emoji: Patch::Absent,
+    };
+    let find_role = |roles: &Value, name: &str| -> Option<String> {
+        roles.as_array().unwrap().iter().find(|r| r["name"] == name).map(|r| r["id"].as_str().unwrap().to_owned())
+    };
+
+    step("Flint UI: create a role through its role editor");
+    let create = admin(&api_alice, guild_model, AdminAction::Roles(RoleAction::Create(empty_edit(Some("flint-role".into()), Some(0), Some(true)))), 701).await;
+    match create {
+        Event::ServerAdmin(client_core::server_admin::Event { result: Ok(_), .. }) => {}
+        Event::ServerAdmin(client_core::server_admin::Event { result: Err(e), .. }) => panic!("flint create role failed: {e}"),
+        _ => panic!("flint create role: unexpected event"),
+    }
+    let (st, roles_now) = rest("GET", &alice_token, &format!("/guilds/{guild_id}"), None).await;
+    assert!(st == 200, "guild after create: {roles_now}");
+    let flint_role = find_role(&roles_now["roles"], "flint-role").expect("flint-role exists");
+    step("PASS Flint create role");
+
+    step("Flint UI: give bob the role through member roles");
+    let bob_model: Id = bob_id.parse().expect("bob id");
+    let role_model: Id = flint_role.parse().expect("role id");
+    let assign = admin(&api_alice, guild_model, AdminAction::SetRole { user: bob_model, role: role_model, assigned: true }, 702).await;
+    assert!(matches!(assign, Event::ServerAdmin(client_core::server_admin::Event { result: Ok(_), .. })), "flint assign role failed");
+    let (st, member) = rest("GET", &alice_token, &format!("/guilds/{guild_id}/members/{bob_id}"), None).await;
+    assert!(st == 200 && member["roles"].as_array().unwrap().iter().any(|r| r == flint_role.as_str()), "bob holds the role: {member}");
+    step("PASS Flint member role assignment");
+
+    step("Flint UI: rename, move, then remove the member role and delete the role");
+    let rename = admin(&api_alice, guild_model, AdminAction::Roles(RoleAction::Edit { id: role_model, edit: empty_edit(Some("flint-renamed".into()), None, None) }), 703).await;
+    assert!(matches!(rename, Event::ServerAdmin(client_core::server_admin::Event { result: Ok(_), .. })), "flint rename failed");
+    let mv = admin(&api_alice, guild_model, AdminAction::Roles(RoleAction::Move { id: role_model, position: 2 }), 704).await;
+    assert!(matches!(mv, Event::ServerAdmin(client_core::server_admin::Event { result: Ok(_), .. })), "flint move failed");
+    let unassign = admin(&api_alice, guild_model, AdminAction::SetRole { user: bob_model, role: role_model, assigned: false }, 705).await;
+    assert!(matches!(unassign, Event::ServerAdmin(client_core::server_admin::Event { result: Ok(_), .. })), "flint unassign failed");
+    let delete = admin(&api_alice, guild_model, AdminAction::Roles(RoleAction::Delete(role_model)), 706).await;
+    assert!(matches!(delete, Event::ServerAdmin(client_core::server_admin::Event { result: Ok(_), .. })), "flint delete failed");
+    let (st, after) = rest("GET", &alice_token, &format!("/guilds/{guild_id}"), None).await;
+    assert!(st == 200 && find_role(&after["roles"], "flint-renamed").is_none(), "role gone after delete");
+    step("PASS Flint rename, move, unassign and delete");
+
+    // ----- Flint's channel editor: rename, topic and an @everyone overwrite -----
+    step("Flint UI: channel editor renames general, sets a topic, and denies @everyone SEND_MESSAGES");
+    let channel_edit = |name: &str, topic: &str, overwrites: Vec<model::permissions::Overwrite>| client_core::channel_actions::Edit {
+        name: name.into(),
+        topic: topic.into(),
+        slowmode: 0,
+        nsfw: false,
+        overwrites,
+        forum: None,
+    };
+    // Like the editor: load the channel first, then edit against what the server reported.
+    let loaded = api_alice
+        .execute(Command::ChannelAction { guild: guild_model, channel, request: 800, action: client_core::channel_actions::Action::Load })
+        .await;
+    let before = match loaded {
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Ok(client_core::channel_actions::Outcome::Details(edit)), .. }) => edit,
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Err(e), .. }) => panic!("flint channel load failed: {e}"),
+        _ => panic!("flint channel load: unexpected event"),
+    };
+    println!("[e2e] loaded before: name={} topic={:?} slowmode={} nsfw={} overwrites={:?}", before.name, before.topic, before.slowmode, before.nsfw, before.overwrites);
+    let deny_send = model::permissions::Overwrite { id: guild_model, kind: 0, allow: 0, deny: 2048 };
+    let after = channel_edit("e2e-renamed", "edited in flint", vec![deny_send]);
+    let edited = api_alice
+        .execute(Command::ChannelAction { guild: guild_model, channel, request: 801, action: client_core::channel_actions::Action::Edit { before, after } })
+        .await;
+    match &edited {
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Ok(_), .. }) => {}
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Err(e), .. }) => panic!("flint channel edit failed: {e}"),
+        _ => panic!("flint channel edit: unexpected event"),
+    }
+    let (st, edited_json) = rest("GET", &alice_token, &format!("/channels/{general}"), None).await;
+    assert!(st == 200 && edited_json["name"] == "e2e-renamed" && edited_json["topic"] == "edited in flint", "renamed: {edited_json}");
+    assert!(edited_json["permission_overwrites"].as_array().unwrap().iter().any(|o| o["id"] == guild_id.as_str() && o["deny"] == "2048"), "overwrite saved: {edited_json}");
+    step("PASS Flint channel edit saved name, topic and overwrite");
+
+    step("Flint UI: the overwrite Flint saved blocks bob's send");
+    let (st, _) = rest("POST", &bob_token, &format!("/channels/{general}/messages"), Some(json!({"content": "should be blocked"}))).await;
+    assert_eq!(st, 403, "bob is blocked by the saved overwrite");
+    step("PASS overwrite enforced");
 
     step("ALL CHECKS PASSED");
     std::process::exit(0);

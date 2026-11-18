@@ -210,6 +210,11 @@ async fn create_role(
             .fetch_one(&state.db)
             .await
             .map_err(chat::db)?;
+        let position = if crate::perms::is_owner(&state, &guild_id, &user.id).await? {
+            position
+        } else {
+            1
+        };
         let role_id = auth::new_id();
         sqlx::query("INSERT INTO roles (id, guild_id, name, permissions, color, hoist, mentionable, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(&role_id)
@@ -241,6 +246,9 @@ async fn edit_role(
     let result: ApiResult<Response> = async {
         let user = chat::authed(&state, &headers).await?;
         perms::require_guild(&state, &guild_id, &user.id, MANAGE_ROLES).await?;
+        if role_id != guild_id {
+            crate::perms::require_above_role(&state, &guild_id, &user.id, &role_id).await?;
+        }
         let current = role_row(&state, &guild_id, &role_id).await?;
         let fields = body.as_object().ok_or_else(|| bad("body must be an object"))?;
         let is_everyone = role_id == guild_id;
@@ -294,6 +302,7 @@ async fn delete_role(
             return Err(bad("the @everyone role cannot be deleted"));
         }
         role_row(&state, &guild_id, &role_id).await?;
+        crate::perms::require_above_role(&state, &guild_id, &user.id, &role_id).await?;
         let targets = guild_members(&state, &guild_id).await?;
         let mut tx = state.db.begin().await.map_err(chat::db)?;
         sqlx::query("DELETE FROM overwrites WHERE target_id = ? AND target_type = ?")
@@ -330,6 +339,7 @@ async fn reorder_roles(
     let result: ApiResult<Response> = async {
         let user = chat::authed(&state, &headers).await?;
         perms::require_guild(&state, &guild_id, &user.id, MANAGE_ROLES).await?;
+        let top = crate::perms::top_position(&state, &guild_id, &user.id).await?;
         let mut tx = state.db.begin().await.map_err(chat::db)?;
         for entry in &entries {
             let id = entry
@@ -342,6 +352,10 @@ async fn reorder_roles(
                 .ok_or_else(|| bad("each entry needs a position"))?;
             if id == guild_id {
                 return Err(bad("the @everyone role stays at the bottom"));
+            }
+            crate::perms::require_above_role(&state, &guild_id, &user.id, id).await?;
+            if top != i64::MAX && position >= top {
+                return Err(crate::perms::missing());
             }
             sqlx::query("UPDATE roles SET position = ? WHERE id = ? AND guild_id = ?")
                 .bind(position.max(1))
@@ -481,7 +495,9 @@ async fn change_member_role(
             return Err(bad("@everyone is held by every member"));
         }
         role_row(&state, &guild_id, &role_id).await?;
+        crate::perms::require_above_role(&state, &guild_id, &user.id, &role_id).await?;
         chat::require_member(&state, &guild_id, &user_id).await?;
+        crate::perms::require_above_member(&state, &guild_id, &user.id, &user_id).await?;
         if assign {
             sqlx::query(
                 "INSERT OR IGNORE INTO member_roles (guild_id, user_id, role_id) VALUES (?, ?, ?)",

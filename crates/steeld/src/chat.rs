@@ -413,6 +413,7 @@ pub fn message_json(row: MessageRow) -> Message {
         reactions: Vec::new(),
         flags: row.flags as u32,
         components: serde_json::from_str(&row.components).unwrap_or_default(),
+        poll: None,
     }
 }
 
@@ -666,6 +667,7 @@ async fn list_messages(
         crate::bots::hide_ephemeral(&state, &user.id, &mut messages).await.map_err(db)?;
         uploads::hydrate(&state, &mut messages).await.map_err(db)?;
         crate::reactions::hydrate(&state, &user.id, &mut messages).await.map_err(db)?;
+        crate::polls::hydrate(&state, &user.id, &mut messages).await.map_err(db)?;
         Ok(Json(messages).into_response())
     }
     .await;
@@ -710,7 +712,10 @@ async fn send_message(
         if content.chars().count() > MAX_CONTENT {
             return Err(api_error(StatusCode::BAD_REQUEST, 50035, format!("content must be at most {MAX_CONTENT} characters")));
         }
-        if content.trim().is_empty() && files.is_empty() && claimed.is_empty() {
+        if let Some(poll) = &payload.poll {
+            crate::polls::validate(poll)?;
+        }
+        if content.trim().is_empty() && files.is_empty() && claimed.is_empty() && payload.poll.is_none() {
             return Err(api_error(StatusCode::BAD_REQUEST, 50035, "a message needs content or a file"));
         }
         let reply_to = match payload.message_reference.as_ref().and_then(|r| r.message_id.clone()) {
@@ -732,6 +737,12 @@ async fn send_message(
         if !components.is_empty() {
             crate::bots::store_extras(&state, &message_id, 0, &components, None).await.map_err(db)?;
         }
+        if let Some(poll) = &payload.poll {
+            if let Err(e) = crate::polls::create(&state, &message_id, poll).await {
+                let _ = sqlx::query("DELETE FROM messages WHERE id = ?").bind(&message_id).execute(&state.db).await;
+                return Err(db(e));
+            }
+        }
         if !claimed.is_empty() {
             uploads::attach_claimed(&state, &channel_id, &message_id, &claimed).await.map_err(db)?;
         }
@@ -747,6 +758,7 @@ async fn send_message(
         let mut out = vec![message_json(message_by_id(&state, &message_id).await?)];
         uploads::hydrate(&state, &mut out).await.map_err(db)?;
         crate::reactions::hydrate(&state, &user.id, &mut out).await.map_err(db)?;
+        crate::polls::hydrate(&state, &user.id, &mut out).await.map_err(db)?;
         let message = out.remove(0);
         let targets = channel_audience(&state, &channel).await.map_err(db)?;
         state.publish(targets, "MESSAGE_CREATE", serde_json::to_value(&message).unwrap_or_default());
@@ -823,6 +835,7 @@ async fn read_multipart(
             message_reference: None,
             attachments: Vec::new(),
             components: Vec::new(),
+            poll: None,
         }),
         files,
     ))
@@ -861,6 +874,9 @@ async fn edit_message(
         let mut out = vec![message_json(message_by_id(&state, &message_id).await?)];
         uploads::hydrate(&state, &mut out).await.map_err(db)?;
         crate::reactions::hydrate(&state, &user.id, &mut out)
+            .await
+            .map_err(db)?;
+        crate::polls::hydrate(&state, &user.id, &mut out)
             .await
             .map_err(db)?;
         let message = out.remove(0);

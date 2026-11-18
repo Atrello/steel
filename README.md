@@ -14,7 +14,7 @@ deploy/                 Dockerfile, docker-compose.yml, example env file
 
 ## Status
 
-Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.py`, `scripts/dm_smoke_test.py`, `scripts/presence_smoke_test.py`, `scripts/upload_smoke_test.py`, `scripts/resume_smoke_test.py`, `scripts/staged_upload_smoke_test.py`, `scripts/members_smoke_test.py`, `scripts/phase2_smoke_test.py`, `scripts/bots_smoke_test.py`. Implemented so far:
+Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.py`, `scripts/dm_smoke_test.py`, `scripts/presence_smoke_test.py`, `scripts/upload_smoke_test.py`, `scripts/resume_smoke_test.py`, `scripts/staged_upload_smoke_test.py`, `scripts/members_smoke_test.py`, `scripts/phase2_smoke_test.py`, `scripts/polls_smoke_test.py`, `scripts/bots_smoke_test.py`. Implemented so far:
 
 - Accounts: `POST /api/v10/auth/register`, `POST /api/v10/auth/login`, `GET /api/v10/users/@me`
 - Argon2id password hashes; opaque bearer tokens stored only as SHA-256 hashes
@@ -35,9 +35,10 @@ Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.p
 
 - Reactions: add and remove your own (`PUT`/`DELETE .../reactions/{emoji}/@me`), remove another user's (guild owner), list who reacted, clear all (owner). Messages carry `reactions` with count and `me`. Events: `MESSAGE_REACTION_ADD`, `MESSAGE_REACTION_REMOVE`, `MESSAGE_REACTION_REMOVE_ALL`. Up to 20 distinct emoji per message.
 - Pins: list (`GET .../messages/pins`, paged by `before`), pin and unpin (`PUT`/`DELETE .../messages/pins/{id}`). Guild owner pins in guilds; any DM participant pins in DMs. Up to 50 per channel. Event: `CHANNEL_PINS_UPDATE`.
+- Polls: create with `poll` on a message (2 to 10 answers, 1 to 768 hours, optional multiselect); vote with `PUT .../polls/{id}/answers/@me`; the author ends it with `POST .../polls/{id}/expire`. Messages carry `poll` with counts and `me_voted`. Events: `MESSAGE_POLL_VOTE_ADD`, `MESSAGE_POLL_VOTE_REMOVE`.
 - Search: `GET /guilds/{id}/messages/search` and `GET /channels/{id}/messages/search` with `content`, `limit`, `offset`. Case-insensitive substring, newest first.
 
-Not yet implemented: threads, forums, polls, member list, emoji and stickers, profiles and settings, audit log, moderation beyond kick and ban, onboarding, roles and permissions, mention counts, voice-related member fields (mute, deafen).
+Not yet implemented: threads, forums, member list, emoji and stickers, profiles and settings, audit log, moderation beyond kick and ban, onboarding, roles and permissions, mention counts, voice-related member fields (mute, deafen).
 
 ## Run locally
 
@@ -64,7 +65,9 @@ cargo test
 
 The schema is versioned. Migrations live in `crates/steeld/migrations/` as `NNNN_name.sql`, are embedded in the binary, and run once at startup. Each applied migration is recorded in `_sqlx_migrations`, so an existing database upgrades in place.
 
-To change the schema, add the next numbered file (for example `0004_add_thing.sql`). Never edit a migration that has shipped; add a new one instead.
+To change the schema, add the next numbered file. Never edit a migration that has shipped; add a new one instead.
+
+Version numbers are reserved per branch so parallel work does not collide: `0001`–`0003` are the baseline schema, `0004`–`0099` belong to the Steel core, `0100`–`0199` to text features, `0200`–`0299` to voice, and `0300`–`0399` to bots. Gaps are fine, and a lower version merged later still runs once. A database may hold migrations this binary does not ship, which startup tolerates.
 
 Databases created by commits between `136f9a6` and `4f36470` were built with an earlier runner that had no migration record. Recreate those dev databases rather than upgrading them.
 

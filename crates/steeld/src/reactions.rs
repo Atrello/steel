@@ -47,7 +47,7 @@ fn db(e: sqlx::Error) -> Response {
 }
 
 /// Emoji path parameter to the stored key, validated.
-fn emoji_key(raw: &str) -> ApiResult<String> {
+pub fn emoji_key(raw: &str) -> ApiResult<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty() || trimmed.len() > MAX_EMOJI_LEN || trimmed.chars().any(char::is_control)
     {
@@ -57,7 +57,7 @@ fn emoji_key(raw: &str) -> ApiResult<String> {
 }
 
 /// Emoji key to the object clients receive: `name:id` splits into name and id.
-fn emoji_json(key: &str) -> ReactionEmoji {
+pub fn emoji_json(key: &str) -> ReactionEmoji {
     match key.rsplit_once(':') {
         Some((name, id)) if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) => {
             ReactionEmoji {
