@@ -5,18 +5,18 @@
 //! touch the server. Clients take their ICE server list from `GET /calls/ice-servers`.
 
 use axum::{
-    Json, Router,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
+    Json, Router,
 };
 use flint_protocol::relationship_type;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::{
-    api::{API_PREFIX, api_error, user_from_headers},
+    api::{api_error, user_from_headers, API_PREFIX},
     db,
     dm::is_blocked_either_way,
     state::AppState,
