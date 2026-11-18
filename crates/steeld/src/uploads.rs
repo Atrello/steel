@@ -138,9 +138,10 @@ pub async fn hydrate(
         return Ok(());
     }
     let placeholders = vec!["?"; messages.len()].join(",");
-    let sql = format!(
+    let sql = crate::db::sql(&format!(
         "SELECT message_id, id, channel_id, filename, content_type, size FROM attachments WHERE message_id IN ({placeholders}) ORDER BY CAST(id AS BIGINT)"
-    );
+    ))
+    .into_owned();
     let mut q = sqlx::query_as::<_, (String, String, String, String, Option<String>, i64)>(&sql);
     for m in messages.iter() {
         q = q.bind(m.id.clone());

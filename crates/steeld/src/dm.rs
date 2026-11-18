@@ -318,7 +318,7 @@ async fn send_friend_request(
     let result: ApiResult<Response> = async {
         let me = authed(&state, &headers).await?;
         let target: Option<(String, String)> = sqlx::query_as(&crate::db::sql(
-            "SELECT id, username FROM users WHERE username = ?",
+            "SELECT id, username FROM users WHERE lower(username) = lower(?)",
         ))
         .bind(req.username.trim())
         .fetch_optional(&state.db)

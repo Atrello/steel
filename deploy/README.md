@@ -37,7 +37,7 @@ All settings are environment variables. `deploy/steel.env.example` lists them wi
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `STEEL_BIND` | `0.0.0.0:8080` in the image | Address and port `steeld` listens on. |
-| `STEEL_DATABASE_URL` | `sqlite:////data/steel.db?mode=rwc` | Database location. Only SQLite is supported right now. |
+| `STEEL_DATABASE_URL` | `sqlite:////data/steel.db?mode=rwc` | Database location. Use `sqlite://...` for a file, or `postgres://user:password@host:5432/steel` for Postgres. Postgres needs an empty database; migrations create the schema. |
 | `STEEL_DATA_DIR` | `/data` | Where uploaded files are stored. |
 | `STEEL_PUBLIC_URL` | empty | The public address clients use. Used for absolute CDN and upload links. An empty value gives relative links, which many clients cannot follow. |
 | `STEEL_MAX_UPLOAD_BYTES` | `104857600` (100 MiB) | Per-file upload limit. |
@@ -108,7 +108,7 @@ Create the data directory first, and make sure the user running `steeld` can wri
 
 ## Limits and known gaps
 
-- Postgres is planned but not available yet. Running on SQLite is the only supported option.
+- Postgres is supported through `STEEL_DATABASE_URL=postgres://...`. SQLite remains the default and is what the Docker quick start uses.
 - The Docker image runs as UID 1000. The data volume must be writable by that user, which the
   image sets up for the default volume.
 - Bots and slash commands are available, but autocomplete and user-installed apps are not.

@@ -169,7 +169,7 @@ async fn ack_message(
     let update = sqlx::query(
         &crate::db::sql("INSERT INTO read_states (user_id, channel_id, last_message_id) VALUES (?, ?, ?) \
          ON CONFLICT(user_id, channel_id) DO UPDATE SET last_message_id = excluded.last_message_id \
-         WHERE CAST(excluded.last_message_id AS BIGINT) > CAST(COALESCE(read_states.last_message_id, '0') AS INTEGER)"),
+         WHERE CAST(excluded.last_message_id AS BIGINT) > CAST(COALESCE(read_states.last_message_id, '0') AS BIGINT)"),
     )
     .bind(&user.id)
     .bind(&channel_id)

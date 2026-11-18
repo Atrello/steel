@@ -51,7 +51,7 @@ Not yet implemented:, emoji and stickers, profiles and settings, audit log, mode
 
 ```sh
 cargo run -p steeld
-# STEEL_DATABASE_URL defaults to sqlite://steel.db?mode=rwc
+# STEEL_DATABASE_URL defaults to sqlite://steel.db?mode=rwc; use postgres://... for Postgres
 ```
 
 ## Run with Docker

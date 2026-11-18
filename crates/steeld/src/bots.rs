@@ -21,7 +21,6 @@ use axum::{
 use flint_protocol::{CreateApplication, Message, User};
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sqlx::{Any, QueryBuilder};
 
 use crate::{
     api::{api_error, internal, API_PREFIX},
@@ -494,7 +493,7 @@ async fn add_bot_to_guild(
         if guild.owner_id != user.id {
             return Err(chat::no_access());
         }
-        sqlx::query(&crate::db::sql("INSERT OR IGNORE INTO guild_members (guild_id, user_id, joined_at) VALUES (?, ?, ?)"))
+        sqlx::query(&crate::db::sql("INSERT INTO guild_members (guild_id, user_id, joined_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING"))
             .bind(&guild_id)
             .bind(&app.bot_user_id)
             .bind(chat::now_iso())
@@ -666,7 +665,7 @@ async fn list_commands(
 ) -> ApiResult<Vec<CommandRow>> {
     sqlx::query_as(&crate::db::sql(
         "SELECT id, version, guild_id, name, description, options FROM application_commands \
-         WHERE application_id = ? AND guild_id IS ? ORDER BY CAST(id AS BIGINT)",
+         WHERE application_id = ? AND guild_id IS NOT DISTINCT FROM ? ORDER BY CAST(id AS BIGINT)",
     ))
     .bind(&app.id)
     .bind(guild)
@@ -687,7 +686,7 @@ async fn insert_command(
 ) -> ApiResult<Value> {
     let options = validate_command(body)?;
     let count: (i64,) = sqlx::query_as(&crate::db::sql(
-        "SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND guild_id IS ?",
+        "SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND guild_id IS NOT DISTINCT FROM ?",
     ))
     .bind(&app.id)
     .bind(guild)
@@ -774,7 +773,7 @@ async fn overwrite_commands(
     }
     let mut tx = state.db.begin().await.map_err(chat::db)?;
     sqlx::query(&crate::db::sql(
-        "DELETE FROM application_commands WHERE application_id = ? AND guild_id IS ?",
+        "DELETE FROM application_commands WHERE application_id = ? AND guild_id IS NOT DISTINCT FROM ?",
     ))
     .bind(&app.id)
     .bind(guild)
@@ -822,7 +821,7 @@ async fn edit_command_row(
     let version = auth::new_id();
     let updated = sqlx::query(&crate::db::sql(
         "UPDATE application_commands SET name = ?, description = ?, options = ?, version = ? \
-         WHERE id = ? AND application_id = ? AND guild_id IS ?",
+         WHERE id = ? AND application_id = ? AND guild_id IS NOT DISTINCT FROM ?",
     ))
     .bind(&body.name)
     .bind(&body.description)
@@ -864,7 +863,7 @@ async fn delete_command_row(
     command_id: &str,
 ) -> ApiResult<Response> {
     let deleted = sqlx::query(&crate::db::sql(
-        "DELETE FROM application_commands WHERE id = ? AND application_id = ? AND guild_id IS ?",
+        "DELETE FROM application_commands WHERE id = ? AND application_id = ? AND guild_id IS NOT DISTINCT FROM ?",
     ))
     .bind(command_id)
     .bind(&app.id)
@@ -1725,7 +1724,7 @@ async fn install_app(
     done(async {
         let user = chat::authed(&state, &headers).await?;
         let app = install_target(&state, &app_id).await?;
-        sqlx::query(&crate::db::sql("INSERT OR IGNORE INTO user_installs (user_id, application_id, created_at) VALUES (?, ?, ?)"))
+        sqlx::query(&crate::db::sql("INSERT INTO user_installs (user_id, application_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING"))
             .bind(&user.id)
             .bind(&app.id)
             .bind(chat::now_iso())
@@ -1894,17 +1893,17 @@ pub async fn hide_ephemeral(
     if messages.is_empty() {
         return Ok(());
     }
-    let mut query: QueryBuilder<Any> = QueryBuilder::new(
-        "SELECT message_id FROM message_extras WHERE (flags & 64) != 0 AND invoker_id IS NOT NULL AND invoker_id != ",
-    );
-    query.push_bind(viewer);
-    query.push(" AND message_id IN (");
-    let mut separated = query.separated(", ");
+    let placeholders = vec!["?"; messages.len()].join(", ");
+    let sql = crate::db::sql(&format!(
+        "SELECT message_id FROM message_extras WHERE (flags & 64) != 0 AND invoker_id IS NOT NULL \
+         AND invoker_id != ? AND message_id IN ({placeholders})"
+    ))
+    .into_owned();
+    let mut query = sqlx::query_as::<_, (String,)>(&sql).bind(viewer);
     for message in messages.iter() {
-        separated.push_bind(message.id.clone());
+        query = query.bind(message.id.clone());
     }
-    separated.push_unseparated(")");
-    let hidden: Vec<(String,)> = query.build_query_as().fetch_all(&state.db).await?;
+    let hidden: Vec<(String,)> = query.fetch_all(&state.db).await?;
     let hidden: HashSet<String> = hidden.into_iter().map(|(id,)| id).collect();
     messages.retain(|m| !hidden.contains(&m.id));
     Ok(())

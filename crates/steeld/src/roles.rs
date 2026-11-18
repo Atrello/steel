@@ -509,7 +509,7 @@ async fn change_member_role(
         crate::perms::require_above_member(&state, &guild_id, &user.id, &user_id).await?;
         if assign {
             sqlx::query(&crate::db::sql(
-                "INSERT OR IGNORE INTO member_roles (guild_id, user_id, role_id) VALUES (?, ?, ?)",
+                "INSERT INTO member_roles (guild_id, user_id, role_id) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
             ))
             .bind(&guild_id)
             .bind(&user_id)
