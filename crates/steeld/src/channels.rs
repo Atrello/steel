@@ -13,6 +13,7 @@ use sqlx::Row;
 use crate::{
     api::api_error,
     chat::{self, ApiResult},
+    perms::{self, MANAGE_CHANNELS, MANAGE_GUILD, MANAGE_ROLES},
     state::AppState,
     uploads,
 };
@@ -46,6 +47,99 @@ pub async fn check_parent(state: &AppState, guild_id: &str, parent: &str) -> Api
     Ok(())
 }
 
+/// Overwrites of one channel as clients see them.
+pub async fn overwrites_for(state: &AppState, channel_id: &str) -> Result<Vec<Value>, sqlx::Error> {
+    let rows: Vec<(String, i64, String, String)> = sqlx::query_as(
+        "SELECT target_id, target_type, allow, deny FROM overwrites WHERE channel_id = ? ORDER BY target_type, CAST(target_id AS INTEGER)",
+    )
+    .bind(channel_id)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, kind, allow, deny)| serde_json::json!({ "id": id, "type": kind, "allow": allow, "deny": deny }))
+        .collect())
+}
+
+/// Replaces a channel's overwrites with `entries`. Each entry names a role (type 0, `@everyone`
+/// is the guild id) or a member (type 1) of this guild, with allow and deny bitfields.
+pub async fn write_overwrites(
+    state: &AppState,
+    guild_id: &str,
+    channel_id: &str,
+    entries: &[Value],
+) -> ApiResult<()> {
+    if entries.len() > 100 {
+        return Err(bad("too many permission overwrites"));
+    }
+    let mut parsed = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let id = entry
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| bad("each overwrite needs an id"))?;
+        let kind = entry
+            .get("type")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| bad("each overwrite needs a type"))?;
+        let bits = |field: &str| -> ApiResult<u64> {
+            match entry.get(field) {
+                None => Ok(0),
+                Some(Value::String(s)) => s
+                    .parse::<u64>()
+                    .map_err(|_| bad("allow and deny must be numbers")),
+                Some(Value::Number(n)) => n
+                    .as_u64()
+                    .ok_or_else(|| bad("allow and deny must be numbers")),
+                Some(_) => Err(bad("allow and deny must be numbers")),
+            }
+        };
+        let (allow, deny) = (bits("allow")?, bits("deny")?);
+        match kind {
+            0 => {
+                if id != guild_id {
+                    let found: Option<(String,)> =
+                        sqlx::query_as("SELECT id FROM roles WHERE id = ? AND guild_id = ?")
+                            .bind(id)
+                            .bind(guild_id)
+                            .fetch_optional(&state.db)
+                            .await
+                            .map_err(chat::db)?;
+                    if found.is_none() {
+                        return Err(bad("overwrite role is not in this guild"));
+                    }
+                }
+            }
+            1 => {
+                chat::require_member(state, guild_id, id)
+                    .await
+                    .map_err(|_| bad("overwrite member is not in this guild"))?;
+            }
+            _ => return Err(bad("overwrite type must be 0 or 1")),
+        }
+        parsed.push((id.to_string(), kind as i64, allow, deny));
+    }
+    let mut tx = state.db.begin().await.map_err(chat::db)?;
+    sqlx::query("DELETE FROM overwrites WHERE channel_id = ?")
+        .bind(channel_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(chat::db)?;
+    for (id, kind, allow, deny) in parsed {
+        sqlx::query("INSERT OR REPLACE INTO overwrites (channel_id, target_id, target_type, allow, deny) VALUES (?, ?, ?, ?, ?)")
+            .bind(channel_id)
+            .bind(id)
+            .bind(kind)
+            .bind(allow.to_string())
+            .bind(deny.to_string())
+            .execute(&mut *tx)
+            .await
+            .map_err(chat::db)?;
+    }
+    tx.commit().await.map_err(chat::db)?;
+    Ok(())
+}
+
 /// Reads an optional nullable string field: absent, null (clear) or a string.
 fn nullable_string(value: Option<&Value>) -> ApiResult<Option<Option<String>>> {
     match value {
@@ -76,10 +170,17 @@ pub async fn patch_channel(
         let user = chat::authed(&state, &headers).await?;
         let channel = chat::channel_row(&state, &channel_id).await?;
         let guild_id = channel.guild_id.clone().ok_or_else(chat::no_access)?;
-        owned_guild(&state, &guild_id, &user.id).await?;
+        perms::require_channel(&state, &guild_id, &channel_id, &user.id, MANAGE_CHANNELS).await?;
         let fields = body
             .as_object()
             .ok_or_else(|| bad("body must be an object"))?;
+        if let Some(overwrites) = fields.get("permission_overwrites") {
+            perms::require_guild(&state, &guild_id, &user.id, MANAGE_ROLES).await?;
+            let list = overwrites
+                .as_array()
+                .ok_or_else(|| bad("permission_overwrites must be a list"))?;
+            write_overwrites(&state, &guild_id, &channel_id, list).await?;
+        }
 
         let name = match fields.get("name") {
             None => channel.name.clone(),
@@ -139,7 +240,7 @@ pub async fn delete_channel(
         let user = chat::authed(&state, &headers).await?;
         let channel = chat::channel_row(&state, &channel_id).await?;
         let guild_id = channel.guild_id.clone().ok_or_else(chat::no_access)?;
-        owned_guild(&state, &guild_id, &user.id).await?;
+        perms::require_channel(&state, &guild_id, &channel_id, &user.id, MANAGE_CHANNELS).await?;
         let json = chat::channel_json(&state, channel).await?;
         uploads::remove_for_channels(&state, std::slice::from_ref(&channel_id))
             .await
@@ -166,7 +267,7 @@ pub async fn reorder_channels(
 ) -> Response {
     let result: ApiResult<Response> = async {
         let user = chat::authed(&state, &headers).await?;
-        owned_guild(&state, &guild_id, &user.id).await?;
+        perms::require_guild(&state, &guild_id, &user.id, MANAGE_CHANNELS).await?;
         if entries.len() > 500 {
             return Err(bad("too many channels in one request"));
         }
@@ -254,7 +355,8 @@ pub async fn patch_guild(
 ) -> Response {
     let result: ApiResult<Response> = async {
         let user = chat::authed(&state, &headers).await?;
-        let guild = owned_guild(&state, &guild_id, &user.id).await?;
+        perms::require_guild(&state, &guild_id, &user.id, MANAGE_GUILD).await?;
+        let guild = chat::guild_row(&state, &guild_id).await?;
         let name = match body.get("name") {
             None => guild.name.clone(),
             Some(Value::String(s)) => chat::check_name(s)?,
@@ -327,7 +429,8 @@ pub async fn list_guild_invites(
 ) -> Response {
     let result: ApiResult<Response> = async {
         let user = chat::authed(&state, &headers).await?;
-        let guild = owned_guild(&state, &guild_id, &user.id).await?;
+        perms::require_guild(&state, &guild_id, &user.id, MANAGE_GUILD).await?;
+        let guild = chat::guild_row(&state, &guild_id).await?;
         let rows: Vec<(String, String)> = sqlx::query_as(
             "SELECT code, channel_id FROM invites WHERE guild_id = ? ORDER BY created_at DESC",
         )
@@ -371,8 +474,8 @@ pub async fn delete_invite(
         let channel_id: String = row.get("channel_id");
         let inviter_id: String = row.get("inviter_id");
         let guild = chat::guild_row(&state, &guild_id).await?;
-        if inviter_id != user.id && guild.owner_id != user.id {
-            return Err(chat::no_access());
+        if inviter_id != user.id {
+            perms::require_guild(&state, &guild_id, &user.id, MANAGE_GUILD).await?;
         }
         let invite = Invite {
             code: code.clone(),

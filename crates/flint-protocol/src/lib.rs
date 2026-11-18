@@ -204,6 +204,11 @@ pub struct Guild {
     pub owner_id: String,
     #[serde(default)]
     pub channels: Vec<Channel>,
+    /// Roles, lowest position first. The `@everyone` role has the guild's id.
+    #[serde(default)]
+    pub roles: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub features: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -274,6 +279,8 @@ pub struct CreateChannel {
     pub topic: Option<String>,
     #[serde(default)]
     pub parent_id: Option<String>,
+    #[serde(default)]
+    pub permission_overwrites: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

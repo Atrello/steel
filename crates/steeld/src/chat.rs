@@ -256,6 +256,9 @@ pub async fn channel_json(state: &AppState, row: ChannelRow) -> ApiResult<Channe
     } else {
         Vec::new()
     };
+    let permission_overwrites = crate::channels::overwrites_for(state, &row.id)
+        .await
+        .map_err(db)?;
     Ok(Channel {
         id: row.id,
         kind: row.kind as u8,
@@ -264,7 +267,7 @@ pub async fn channel_json(state: &AppState, row: ChannelRow) -> ApiResult<Channe
         position: row.position,
         topic: row.topic,
         parent_id: row.parent_id,
-        permission_overwrites: Vec::new(),
+        permission_overwrites,
         recipients,
     })
 }
@@ -307,12 +310,26 @@ fn guild_channel(row: ChannelRow) -> Channel {
 }
 
 pub async fn guild_channels(state: &AppState, guild_id: &str) -> ApiResult<Vec<Channel>> {
-    Ok(guild_channel_rows(state, guild_id)
-        .await
-        .map_err(db)?
-        .into_iter()
-        .map(guild_channel)
-        .collect())
+    let mut channels = Vec::new();
+    for row in guild_channel_rows(state, guild_id).await.map_err(db)? {
+        channels.push(
+            guild_channel_with_overwrites(state, row)
+                .await
+                .map_err(db)?,
+        );
+    }
+    Ok(channels)
+}
+
+/// Guild channel with its permission overwrites filled in.
+async fn guild_channel_with_overwrites(
+    state: &AppState,
+    row: ChannelRow,
+) -> Result<Channel, sqlx::Error> {
+    let id = row.id.clone();
+    let mut channel = guild_channel(row);
+    channel.permission_overwrites = crate::channels::overwrites_for(state, &id).await?;
+    Ok(channel)
 }
 
 pub async fn guild_json(state: &AppState, row: GuildRow, with_channels: bool) -> ApiResult<Guild> {
@@ -321,11 +338,14 @@ pub async fn guild_json(state: &AppState, row: GuildRow, with_channels: bool) ->
     } else {
         Vec::new()
     };
+    let roles = crate::roles::roles_for_guild(state, &row.id).await?;
     Ok(Guild {
         id: row.id,
         name: row.name,
         owner_id: row.owner_id,
         channels,
+        roles,
+        features: Vec::new(),
     })
 }
 
@@ -349,16 +369,18 @@ pub async fn guilds_for_user(state: &AppState, user_id: &str) -> Result<Vec<Guil
     .await?;
     let mut guilds = Vec::with_capacity(rows.len());
     for row in rows {
-        let channels = guild_channel_rows(state, &row.id)
-            .await?
-            .into_iter()
-            .map(guild_channel)
-            .collect();
+        let mut channels = Vec::new();
+        for channel_row in guild_channel_rows(state, &row.id).await? {
+            channels.push(guild_channel_with_overwrites(state, channel_row).await?);
+        }
+        let roles = crate::roles::roles_for_guild_db(state, &row.id).await?;
         guilds.push(Guild {
             id: row.id,
             name: row.name,
             owner_id: row.owner_id,
             channels,
+            roles,
+            features: Vec::new(),
         });
     }
     Ok(guilds)
@@ -460,6 +482,14 @@ async fn create_guild_inner(
     sqlx::query("INSERT INTO channels (id, guild_id, kind, name, position, created_at) VALUES (?, ?, ?, 'general', 0, ?)")
         .bind(&general_id).bind(&guild_id).bind(channel_type::GUILD_TEXT as i64).bind(&now)
         .execute(&mut *tx).await.map_err(db)?;
+    sqlx::query("INSERT INTO roles (id, guild_id, name, permissions, color, hoist, mentionable, position, created_at) VALUES (?, ?, '@everyone', ?, 0, 0, 0, 0, ?)")
+        .bind(&guild_id)
+        .bind(&guild_id)
+        .bind(crate::perms::DEFAULT_EVERYONE.to_string())
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
     tx.commit().await.map_err(db)?;
 
     let guild = guild_json(
@@ -531,10 +561,7 @@ async fn create_channel(
 ) -> Response {
     let result: ApiResult<Response> = async {
         let user = authed(&state, &headers).await?;
-        let guild = guild_row(&state, &guild_id).await?;
-        if guild.owner_id != user.id {
-            return Err(no_access());
-        }
+        crate::perms::require_guild(&state, &guild_id, &user.id, crate::perms::MANAGE_CHANNELS).await?;
         let name = check_name(&req.name)?;
         let kind = req.kind.unwrap_or(channel_type::GUILD_TEXT);
         // Announcement, stage and forum channels are stored like text channels; their extra
@@ -563,6 +590,10 @@ async fn create_channel(
             .bind(&channel_id).bind(&guild_id).bind(kind as i64).bind(&name)
             .bind(req.topic.as_deref().filter(|t| !t.is_empty())).bind(position).bind(parent).bind(now_iso())
             .execute(&state.db).await.map_err(db)?;
+        if let Some(overwrites) = &req.permission_overwrites {
+            crate::perms::require_guild(&state, &guild_id, &user.id, crate::perms::MANAGE_ROLES).await?;
+            crate::channels::write_overwrites(&state, &guild_id, &channel_id, overwrites).await?;
+        }
         let channel = channel_json(&state, channel_row(&state, &channel_id).await?).await?;
         let targets = member_ids(&state, &guild_id).await.map_err(db)?;
         state.publish(targets, "CHANNEL_CREATE", serde_json::to_value(&channel).unwrap_or_default());
@@ -607,6 +638,7 @@ async fn list_messages(
         let user = authed(&state, &headers).await?;
         let channel = channel_row(&state, &channel_id).await?;
         require_channel(&state, &channel, &user.id).await?;
+        crate::perms::require_channel_row(&state, &channel, &user.id, crate::perms::VIEW_CHANNEL).await?;
         let limit = q.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
         let rows: Vec<MessageRow> = match q.before {
             Some(before) => sqlx::query_as(&format!(
@@ -640,6 +672,7 @@ async fn send_message(
         let user = authed(&state, &headers).await?;
         let channel = channel_row(&state, &channel_id).await?;
         require_channel(&state, &channel, &user.id).await?;
+        crate::perms::require_channel_row(&state, &channel, &user.id, crate::perms::VIEW_CHANNEL | crate::perms::SEND_MESSAGES).await?;
 
         let is_multipart = headers
             .get(header::CONTENT_TYPE)
@@ -904,6 +937,7 @@ async fn create_invite(
         let user = authed(&state, &headers).await?;
         let channel = channel_row(&state, &channel_id).await?;
         require_channel(&state, &channel, &user.id).await?;
+        crate::perms::require_channel_row(&state, &channel, &user.id, crate::perms::CREATE_INSTANT_INVITE).await?;
         let guild_id = channel.guild_id.clone().ok_or_else(|| {
             api_error(StatusCode::BAD_REQUEST, 50035, "invites are only for guild channels")
         })?;

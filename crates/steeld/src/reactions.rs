@@ -190,7 +190,11 @@ async fn remove_user(
         let key = emoji_key(&emoji)?;
         let (me, channel) = message_in_channel(&state, &headers, &channel_id, &message_id).await?;
         let is_owner = match &channel.guild_id {
-            Some(guild_id) => chat::guild_row(&state, guild_id).await?.owner_id == me,
+            Some(guild_id) => {
+                (crate::perms::channel_permissions(&state, guild_id, &channel.id, &me).await?
+                    & crate::perms::MANAGE_MESSAGES)
+                    != 0
+            }
             None => false,
         };
         if !is_owner {
@@ -234,7 +238,11 @@ async fn clear_all(
             let (me, channel) =
                 message_in_channel(&state, &headers, &channel_id, &message_id).await?;
             let is_owner = match &channel.guild_id {
-                Some(guild_id) => chat::guild_row(&state, guild_id).await?.owner_id == me,
+                Some(guild_id) => {
+                    (crate::perms::channel_permissions(&state, guild_id, &channel.id, &me).await?
+                        & crate::perms::MANAGE_MESSAGES)
+                        != 0
+                }
                 None => false,
             };
             if !is_owner {

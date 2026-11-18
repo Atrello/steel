@@ -23,6 +23,7 @@ async fn rest(method: &str, token: &str, path: &str, body: Option<Value>) -> (u1
         "GET" => client.get(url),
         "POST" => client.post(url),
         "PUT" => client.put(url),
+        "PATCH" => client.patch(url),
         "DELETE" => client.delete(url),
         other => panic!("method {other}"),
     };
@@ -245,6 +246,71 @@ async fn main() {
     assert!(fetched.status().is_success(), "photo fetch {url}: {}", fetched.status());
     assert_eq!(fetched.bytes().await.expect("photo bytes").as_ref(), png.as_slice(), "photo bytes match");
     step("PASS photo upload and download");
+
+    // ----- roles and permissions over REST -----
+    step("roles: bob cannot create a channel without MANAGE_CHANNELS");
+    let (st, _) = rest("POST", &bob_token, &format!("/guilds/{guild_id}/channels"), Some(json!({"name": "bob-denied"}))).await;
+    assert_eq!(st, 403, "bob should be denied channel create");
+    step("PASS denied");
+
+    step("roles: alice creates a role with MANAGE_CHANNELS, assigns it to bob, bob can create a channel");
+    let (st, role) = rest("POST", &alice_token, &format!("/guilds/{guild_id}/roles"), Some(json!({"name": "mods", "permissions": "16"}))).await;
+    assert!(st / 100 == 2, "create role: {role}");
+    let role_id = role["id"].as_str().expect("role id").to_owned();
+    let bob_id = {
+        let (st, me) = rest("GET", &bob_token, "/users/@me", None).await;
+        assert!(st == 200, "bob me: {me}");
+        me["id"].as_str().unwrap().to_owned()
+    };
+    let (st, _) = rest("PUT", &alice_token, &format!("/guilds/{guild_id}/members/{bob_id}/roles/{role_id}"), None).await;
+    assert!(st / 100 == 2, "assign role: {st}");
+    let (st, made) = rest("POST", &bob_token, &format!("/guilds/{guild_id}/channels"), Some(json!({"name": "bob-made"}))).await;
+    assert!(st / 100 == 2, "bob with role should create a channel: {made}");
+    step("PASS role assignment grants MANAGE_CHANNELS");
+
+    step("roles: guild catalog lists @everyone (guild id) and mods; member counts reflect the assignment");
+    let (st, guild_json) = rest("GET", &alice_token, &format!("/guilds/{guild_id}"), None).await;
+    assert!(st == 200, "get guild: {guild_json}");
+    let roles = guild_json["roles"].as_array().expect("roles array");
+    assert!(roles.iter().any(|r| r["id"] == guild_id.as_str() && r["name"] == "@everyone"), "@everyone in {roles:?}");
+    assert!(roles.iter().any(|r| r["id"] == role_id.as_str() && r["name"] == "mods"), "mods in {roles:?}");
+    let (st, counts) = rest("GET", &alice_token, &format!("/guilds/{guild_id}/roles/member-counts"), None).await;
+    assert!(st == 200, "member counts: {counts}");
+    assert_eq!(counts[role_id.as_str()].as_i64(), Some(1), "mods member count");
+    step("PASS catalog and counts");
+
+    step("overwrites: deny SEND_MESSAGES for @everyone in general; bob is blocked, alice is not");
+    let (st, _) = rest("PATCH", &alice_token, &format!("/channels/{general}"), Some(json!({"permission_overwrites": [{"id": guild_id, "type": 0, "allow": "0", "deny": "2048"}]}))).await;
+    assert!(st / 100 == 2, "patch overwrite");
+    let (st, _) = rest("POST", &bob_token, &format!("/channels/{general}/messages"), Some(json!({"content": "blocked"}))).await;
+    assert_eq!(st, 403, "bob should be blocked by the overwrite");
+    let (st, _) = rest("POST", &alice_token, &format!("/channels/{general}/messages"), Some(json!({"content": "owner still posts"}))).await;
+    assert!(st / 100 == 2, "owner posts");
+    step("PASS @everyone deny");
+
+    step("overwrites: a member allow for bob lifts the block");
+    let (st, _) = rest("PATCH", &alice_token, &format!("/channels/{general}"), Some(json!({"permission_overwrites": [
+        {"id": guild_id, "type": 0, "allow": "0", "deny": "2048"},
+        {"id": bob_id, "type": 1, "allow": "2048", "deny": "0"}
+    ]}))).await;
+    assert!(st / 100 == 2, "patch member overwrite");
+    let (st, _) = rest("POST", &bob_token, &format!("/channels/{general}/messages"), Some(json!({"content": "allowed"}))).await;
+    assert!(st / 100 == 2, "bob allowed by member overwrite: {st}");
+    step("PASS member allow overrides @everyone deny");
+
+    step("roles: removing the role takes MANAGE_CHANNELS away again");
+    let (st, _) = rest("DELETE", &alice_token, &format!("/guilds/{guild_id}/members/{bob_id}/roles/{role_id}"), None).await;
+    assert!(st / 100 == 2, "remove role");
+    let (st, _) = rest("POST", &bob_token, &format!("/guilds/{guild_id}/channels"), Some(json!({"name": "bob-again"}))).await;
+    assert_eq!(st, 403, "bob should lose channel create");
+    step("PASS role removal revokes");
+
+    step("roles: non-owners cannot delete the guild, and @everyone cannot be deleted");
+    let (st, _) = rest("DELETE", &bob_token, &format!("/guilds/{guild_id}"), None).await;
+    assert_eq!(st, 403, "bob cannot delete the guild");
+    let (st, _) = rest("DELETE", &alice_token, &format!("/guilds/{guild_id}/roles/{guild_id}"), None).await;
+    assert_eq!(st, 400, "@everyone cannot be deleted");
+    step("PASS guard rails");
 
     step("ALL CHECKS PASSED");
     std::process::exit(0);

@@ -37,18 +37,18 @@ fn db(e: sqlx::Error) -> Response {
     crate::api::internal(e)
 }
 
-/// Who may pin: the guild owner in guilds, any participant in a DM.
+/// Who may pin: holders of MANAGE_MESSAGES in guilds, any participant in a DM.
 async fn may_pin(state: &AppState, channel: &chat::ChannelRow, user_id: &str) -> ApiResult<()> {
     match &channel.guild_id {
         Some(guild_id) => {
-            if chat::guild_row(state, guild_id).await?.owner_id != user_id {
-                return Err(api_error(
-                    StatusCode::FORBIDDEN,
-                    50013,
-                    "Missing Permissions",
-                ));
-            }
-            Ok(())
+            crate::perms::require_channel(
+                state,
+                guild_id,
+                &channel.id,
+                user_id,
+                crate::perms::MANAGE_MESSAGES,
+            )
+            .await
         }
         None => Ok(()),
     }

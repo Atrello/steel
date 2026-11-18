@@ -53,10 +53,6 @@ fn db(e: sqlx::Error) -> Response {
     crate::api::internal(e)
 }
 
-fn owner_only() -> Response {
-    api_error(StatusCode::FORBIDDEN, 50013, "Missing Permissions")
-}
-
 /// Move a member's read marker forward only, and tell that user.
 async fn advance_read(
     state: &AppState,
@@ -285,7 +281,10 @@ async fn member_row(state: &AppState, guild_id: &str, user_id: &str) -> ApiResul
     .await
     .map_err(db)?;
     let (id, username, joined_at, nick) = row.ok_or_else(chat::missing_member)?;
-    Ok(member_json(&id, &username, nick, &joined_at))
+    let roles = crate::roles::member_role_ids(state, guild_id, user_id).await?;
+    let mut member = member_json(&id, &username, nick, &joined_at);
+    member["roles"] = json!(roles);
+    Ok(member)
 }
 
 /// `GET /guilds/{id}/members/{user}`: any member can read another member.
@@ -312,7 +311,6 @@ async fn edit_member(
 ) -> Response {
     let result: ApiResult<Response> = async {
         let me = chat::authed(&state, &headers).await?;
-        let guild = chat::guild_row(&state, &guild_id).await?;
         chat::require_member(&state, &guild_id, &me.id).await?;
         let fields = body.as_object().ok_or_else(|| api_error(StatusCode::BAD_REQUEST, 50035, "body must be an object"))?;
         if let Some(unsupported) = fields.keys().find(|k| k.as_str() != "nick") {
@@ -322,9 +320,12 @@ async fn edit_member(
                 format!("{unsupported} is not supported yet"),
             ));
         }
-        if me.id != user_id && guild.owner_id != me.id {
-            return Err(owner_only());
-        }
+        let needed = if me.id == user_id {
+            crate::perms::CHANGE_NICKNAME
+        } else {
+            crate::perms::MANAGE_NICKNAMES
+        };
+        crate::perms::require_guild(&state, &guild_id, &me.id, needed).await?;
         let nick = match fields.get("nick") {
             None | Some(Value::Null) => None,
             Some(Value::String(s)) => {
@@ -388,12 +389,11 @@ async fn moderation_target(
     headers: &HeaderMap,
     guild_id: &str,
     user_id: &str,
+    bit: u64,
 ) -> ApiResult<User> {
     let me = chat::authed(state, headers).await?;
+    crate::perms::require_guild(state, guild_id, &me.id, bit).await?;
     let guild = chat::guild_row(state, guild_id).await?;
-    if guild.owner_id != me.id {
-        return Err(owner_only());
-    }
     if user_id == guild.owner_id || user_id == me.id {
         return Err(api_error(
             StatusCode::BAD_REQUEST,
@@ -411,7 +411,14 @@ async fn kick_member(
     Path((guild_id, user_id)): Path<(String, String)>,
 ) -> Response {
     let result: ApiResult<Response> = async {
-        moderation_target(&state, &headers, &guild_id, &user_id).await?;
+        moderation_target(
+            &state,
+            &headers,
+            &guild_id,
+            &user_id,
+            crate::perms::KICK_MEMBERS,
+        )
+        .await?;
         let found: Option<(i64,)> =
             sqlx::query_as("SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?")
                 .bind(&guild_id)
@@ -436,7 +443,14 @@ async fn ban_member(
     Path((guild_id, user_id)): Path<(String, String)>,
 ) -> Response {
     let result: ApiResult<Response> = async {
-        moderation_target(&state, &headers, &guild_id, &user_id).await?;
+        moderation_target(
+            &state,
+            &headers,
+            &guild_id,
+            &user_id,
+            crate::perms::BAN_MEMBERS,
+        )
+        .await?;
         sqlx::query(
             "INSERT OR REPLACE INTO guild_bans (guild_id, user_id, created_at) VALUES (?, ?, ?)",
         )
@@ -476,10 +490,7 @@ async fn unban_member(
 ) -> Response {
     let result: ApiResult<Response> = async {
         let me = chat::authed(&state, &headers).await?;
-        let guild = chat::guild_row(&state, &guild_id).await?;
-        if guild.owner_id != me.id {
-            return Err(owner_only());
-        }
+        crate::perms::require_guild(&state, &guild_id, &me.id, crate::perms::BAN_MEMBERS).await?;
         sqlx::query("DELETE FROM guild_bans WHERE guild_id = ? AND user_id = ?")
             .bind(&guild_id)
             .bind(&user_id)
