@@ -373,6 +373,44 @@ async fn run_checks(
     })
     .await;
     step("PASS DM index and /ping in a bot DM");
+
+    step("member types 'he' into /echo's autocompleted text; the bot's suggestions reach Flint");
+    let echo = by_name("echo");
+    let typed = [("text".to_string(), "he".to_string())];
+    let invocation = echo
+        .autocomplete_invocation(&[], &typed, "text")
+        .map_err(|e| format!("autocomplete invocation: {e}"))?;
+    let nonce = "7006".to_string();
+    submit(
+        &api,
+        Request {
+            request: 6,
+            nonce: nonce.clone(),
+            application_id: app,
+            channel_id: channel,
+            guild_id: Some(guild),
+            message_id: None,
+            message_flags: 0,
+            data: Data::Autocomplete {
+                invocation: Box::new(invocation),
+                focused: "text".into(),
+            },
+        },
+    )
+    .await?;
+    let choices = wait_for(&mut rx, "autocomplete choices", |e| match e {
+        Event::Interaction(InteractionEvent::Autocomplete { nonce: n, choices })
+            if *n == nonce =>
+        {
+            Some(choices.iter().map(|c| c.name.clone()).collect::<Vec<_>>())
+        }
+        _ => None,
+    })
+    .await;
+    if choices.is_empty() || !choices.iter().all(|name| name.starts_with("he")) {
+        return Err(format!("unexpected suggestions for 'he': {choices:?}"));
+    }
+    step(&format!("PASS autocomplete suggestions for 'he': {choices:?}"));
     Ok(())
 }
 
