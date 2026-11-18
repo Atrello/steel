@@ -99,7 +99,11 @@ async fn dm_channel(
     })
 }
 
-async fn is_blocked_either_way(state: &AppState, a: &str, b: &str) -> Result<bool, sqlx::Error> {
+pub async fn is_blocked_either_way(
+    state: &AppState,
+    a: &str,
+    b: &str,
+) -> Result<bool, sqlx::Error> {
     let found: Option<(i64,)> = sqlx::query_as(
         &crate::db::sql("SELECT 1 FROM relationships WHERE kind = ? AND ((user_id = ? AND target_id = ?) OR (user_id = ? AND target_id = ?))"),
     )
