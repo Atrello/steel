@@ -86,6 +86,10 @@ pub fn routes() -> Router<AppState> {
             axum::routing::patch(edit_guild_command).delete(delete_guild_command),
         )
         .route(
+            &format!("{API_PREFIX}/users/@me/applications/{{app_id}}"),
+            axum::routing::put(install_app).delete(uninstall_app),
+        )
+        .route(
             &format!("{API_PREFIX}/guilds/{{guild_id}}/application-command-index"),
             get(guild_index),
         )
@@ -141,6 +145,7 @@ struct InteractionRow {
     id: String,
     token: String,
     application_id: String,
+    kind: i64,
     channel_id: String,
     user_id: String,
     message_id: Option<String>,
@@ -1014,19 +1019,44 @@ async fn delete_guild_command(
 
 /// Discovery index the client uses for the composer: the commands of bots present in a guild,
 /// plus guild-scoped commands registered for that guild.
-async fn index_for_guild(state: &AppState, guild_id: &str) -> ApiResult<Response> {
-    let rows: Vec<IndexRow> = sqlx::query_as(
-        "SELECT c.id, c.version, c.application_id, c.guild_id, c.name, c.description, c.options, a.name AS app_name \
-         FROM application_commands c JOIN applications a ON a.id = c.application_id \
-         WHERE (c.guild_id = ? OR c.guild_id IS NULL) \
-           AND EXISTS (SELECT 1 FROM guild_members gm WHERE gm.guild_id = ? AND gm.user_id = a.bot_user_id) \
-         ORDER BY c.name, CAST(c.id AS INTEGER)",
-    )
-    .bind(guild_id)
-    .bind(guild_id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(chat::db)?;
+/// Discovery index for a context. `guild` is set for guild channels; DMs pass `None` and the
+/// channel id. Guild commands need the bot in the guild. Global commands need the bot in the guild
+/// or DM, or the viewer having installed the application.
+async fn index_for(
+    state: &AppState,
+    guild: Option<&str>,
+    dm_channel: &str,
+    user_id: &str,
+) -> ApiResult<Response> {
+    let rows: Vec<IndexRow> = match guild {
+        Some(guild) => sqlx::query_as(
+            "SELECT c.id, c.version, c.application_id, c.guild_id, c.name, c.description, c.options, a.name AS app_name \
+             FROM application_commands c JOIN applications a ON a.id = c.application_id \
+             WHERE (c.guild_id = ? OR c.guild_id IS NULL) AND (\
+               EXISTS (SELECT 1 FROM guild_members gm WHERE gm.guild_id = ? AND gm.user_id = a.bot_user_id) \
+               OR (c.guild_id IS NULL AND EXISTS (SELECT 1 FROM user_installs ui WHERE ui.application_id = a.id AND ui.user_id = ?))) \
+             ORDER BY c.name, CAST(c.id AS INTEGER)",
+        )
+        .bind(guild)
+        .bind(guild)
+        .bind(user_id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(chat::db)?,
+        None => sqlx::query_as(
+            "SELECT c.id, c.version, c.application_id, c.guild_id, c.name, c.description, c.options, a.name AS app_name \
+             FROM application_commands c JOIN applications a ON a.id = c.application_id \
+             WHERE c.guild_id IS NULL AND (\
+               EXISTS (SELECT 1 FROM channel_recipients cr WHERE cr.channel_id = ? AND cr.user_id = a.bot_user_id) \
+               OR EXISTS (SELECT 1 FROM user_installs ui WHERE ui.application_id = a.id AND ui.user_id = ?)) \
+             ORDER BY c.name, CAST(c.id AS INTEGER)",
+        )
+        .bind(dm_channel)
+        .bind(user_id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(chat::db)?,
+    };
 
     let mut commands = Vec::with_capacity(rows.len());
     let mut applications: Vec<Value> = Vec::new();
@@ -1065,7 +1095,7 @@ async fn guild_index(
         async {
             let user = chat::authed(&state, &headers).await?;
             chat::require_member(&state, &guild_id, &user.id).await?;
-            index_for_guild(&state, &guild_id).await
+            index_for(&state, Some(&guild_id), "", &user.id).await
         }
         .await,
     )
@@ -1081,14 +1111,7 @@ async fn channel_index(
             let user = chat::authed(&state, &headers).await?;
             let channel = chat::channel_row(&state, &channel_id).await?;
             chat::require_channel(&state, &channel, &user.id).await?;
-            match &channel.guild_id {
-                Some(guild) => index_for_guild(&state, guild).await,
-                // Bots are not added to direct messages yet, so there is nothing to list.
-                None => Ok(Json(
-                    json!({ "version": 1, "application_commands": [], "applications": [] }),
-                )
-                .into_response()),
-            }
+            index_for(&state, channel.guild_id.as_deref(), &channel.id, &user.id).await
         }
         .await,
     )
@@ -1130,6 +1153,8 @@ fn nonce_text(value: &Value) -> Option<String> {
 }
 
 /// Accept the request from a user and forward it to the bot. The bot answers with its token.
+/// Accept an interaction from a user and forward it to the bot. The bot answers with the token.
+/// The bot must be in the guild or DM, or the user must have installed the application.
 async fn create_interaction(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1140,17 +1165,19 @@ async fn create_interaction(
         let app = app_row(&state, &req.application_id).await?;
         let channel = chat::channel_row(&state, &req.channel_id).await?;
         chat::require_channel(&state, &channel, &user.id).await?;
-        let Some(guild_id) = channel.guild_id.clone() else {
-            return Err(unknown("application", 10002));
+        let bot_in_context = match &channel.guild_id {
+            Some(guild) => is_guild_member(&state, guild, &app.bot_user_id).await?,
+            None => is_recipient(&state, &channel.id, &app.bot_user_id).await?,
         };
-        chat::require_member(&state, &guild_id, &app.bot_user_id)
-            .await
-            .map_err(|_| unknown("application", 10002))?;
+        if !bot_in_context && !is_installed(&state, &user.id, &app.id).await? {
+            return Err(unknown("application", 10002));
+        }
         let nonce = req.nonce.as_ref().and_then(nonce_text);
 
         let mut message_json = None;
         let (bot_data, message_id) = match req.kind {
-            2 => {
+            // APPLICATION_COMMAND and APPLICATION_COMMAND_AUTOCOMPLETE share the command lookup.
+            2 | 4 => {
                 let command_id = str_field(&req.data, "id")?;
                 let (version, name, command_guild): (String, String, Option<String>) = sqlx::query_as(
                     "SELECT version, name, guild_id FROM application_commands \
@@ -1158,11 +1185,14 @@ async fn create_interaction(
                 )
                 .bind(command_id)
                 .bind(&app.id)
-                .bind(&guild_id)
+                .bind(channel.guild_id.as_deref().unwrap_or(""))
                 .fetch_optional(&state.db)
                 .await
                 .map_err(chat::db)?
                 .ok_or_else(|| unknown("application command", 10065))?;
+                if command_guild.is_some() && !bot_in_context {
+                    return Err(unknown("application command", 10065));
+                }
                 let options = req.data.get("options").cloned().unwrap_or(json!([]));
                 if !options.is_array() {
                     return Err(bad("command options must be an array"));
@@ -1230,7 +1260,7 @@ async fn create_interaction(
         .bind(&app.id)
         .bind(req.kind as i64)
         .bind(&channel.id)
-        .bind(&guild_id)
+        .bind(channel.guild_id.as_deref())
         .bind(&user.id)
         .bind(&message_id)
         .bind(&nonce)
@@ -1239,6 +1269,7 @@ async fn create_interaction(
         .await
         .map_err(chat::db)?;
 
+        // Guild interactions carry a member; DM and user-install interactions carry the user.
         let mut payload = json!({
             "id": interaction_id,
             "application_id": app.id,
@@ -1246,12 +1277,23 @@ async fn create_interaction(
             "token": token,
             "version": 1,
             "channel_id": channel.id,
-            "guild_id": guild_id,
-            "member": { "user": user },
             "data": bot_data,
         });
+        match &channel.guild_id {
+            Some(guild) => {
+                payload["guild_id"] = json!(guild);
+                payload["member"] = json!({ "user": user });
+            }
+            None => payload["user"] = json!(user),
+        }
         if let Some(message) = message_json {
             payload["message"] = serde_json::to_value(message).unwrap_or_default();
+        }
+        if req.kind == 4 {
+            // Autocomplete: the bot answers with choices, delivered back as INTERACTION_AUTOCOMPLETE_RESULT.
+            payload["data"]["options"] = req.data.get("options").cloned().unwrap_or(json!([]));
+            state.publish(vec![app.bot_user_id.clone()], "INTERACTION_CREATE", payload);
+            return Ok(StatusCode::NO_CONTENT.into_response());
         }
         state.publish(vec![app.bot_user_id.clone()], "INTERACTION_CREATE", payload);
         if let Some(nonce) = nonce {
@@ -1264,7 +1306,7 @@ async fn create_interaction(
 
 async fn interaction_by_id(state: &AppState, interaction_id: &str) -> ApiResult<InteractionRow> {
     sqlx::query_as(
-        "SELECT id, token, application_id, channel_id, user_id, message_id, nonce, responded, response_message_id, created_at \
+        "SELECT id, token, application_id, kind, channel_id, user_id, message_id, nonce, responded, response_message_id, created_at \
          FROM interactions WHERE id = ?",
     )
     .bind(interaction_id)
@@ -1484,8 +1526,12 @@ async fn callback(
     done(async {
         let row = interaction_by_id(&state, &interaction_id).await?;
         check_token(&row, &token)?;
-        if row.responded != 0 && !matches!(body.kind, 8) {
+        if row.responded != 0 {
             return Err(api_error(StatusCode::BAD_REQUEST, 40060, "Interaction has already been acknowledged"));
+        }
+        // An autocomplete request is answered only with choices (type 8), and only once.
+        if (row.kind == 4) != (body.kind == 8) {
+            return Err(bad("autocomplete requests are answered with type 8, and only they are"));
         }
         let data = body.data.unwrap_or(Value::Null);
         let channel = chat::channel_row(&state, &row.channel_id).await?;
@@ -1549,13 +1595,108 @@ async fn callback(
                     }),
                 );
             }
-            // AUTOCOMPLETE_RESULT: the client has no autocomplete request yet, so nothing to deliver.
-            8 => {}
+            // APPLICATION_COMMAND_AUTOCOMPLETE_RESULT: choices for the invoker's focused option.
+            8 => {
+                let choices = data.get("choices").cloned().unwrap_or(json!([]));
+                let choices = choices
+                    .as_array()
+                    .filter(|list| list.len() <= 25)
+                    .ok_or_else(|| bad("autocomplete choices must be an array of at most 25"))?;
+                for choice in choices {
+                    let name = choice.get("name").and_then(Value::as_str).unwrap_or_default();
+                    let valid_name = !name.is_empty() && name.chars().count() <= 100;
+                    let valid_value = matches!(choice.get("value"), Some(Value::String(v)) if v.chars().count() <= 100)
+                        || matches!(choice.get("value"), Some(Value::Number(_)));
+                    if !valid_name || !valid_value {
+                        return Err(bad("each choice needs a name of 1-100 characters and a string or number value"));
+                    }
+                }
+                mark_responded(&state, &row.id, None).await?;
+                state.publish(
+                    vec![row.user_id.clone()],
+                    "INTERACTION_AUTOCOMPLETE_RESULT",
+                    json!({ "nonce": row.nonce, "choices": choices }),
+                );
+            }
             _ => return Err(bad("unsupported callback type")),
         }
         Ok(StatusCode::NO_CONTENT.into_response())
     }
     .await)
+}
+
+async fn is_guild_member(state: &AppState, guild_id: &str, user_id: &str) -> ApiResult<bool> {
+    let found: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?")
+            .bind(guild_id)
+            .bind(user_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(chat::db)?;
+    Ok(found.is_some())
+}
+
+async fn is_recipient(state: &AppState, channel_id: &str, user_id: &str) -> ApiResult<bool> {
+    let found: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM channel_recipients WHERE channel_id = ? AND user_id = ?")
+            .bind(channel_id)
+            .bind(user_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(chat::db)?;
+    Ok(found.is_some())
+}
+
+async fn is_installed(state: &AppState, user_id: &str, application_id: &str) -> ApiResult<bool> {
+    let found: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM user_installs WHERE user_id = ? AND application_id = ?")
+            .bind(user_id)
+            .bind(application_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(chat::db)?;
+    Ok(found.is_some())
+}
+
+/// `PUT /users/@me/applications/{app}`: install an application for yourself.
+async fn install_app(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(app_id): Path<String>,
+) -> Response {
+    done(async {
+        let user = chat::authed(&state, &headers).await?;
+        app_row(&state, &app_id).await?;
+        sqlx::query("INSERT OR IGNORE INTO user_installs (user_id, application_id, created_at) VALUES (?, ?, ?)")
+            .bind(&user.id)
+            .bind(&app_id)
+            .bind(chat::now_iso())
+            .execute(&state.db)
+            .await
+            .map_err(chat::db)?;
+        Ok(StatusCode::NO_CONTENT.into_response())
+    }
+    .await)
+}
+
+async fn uninstall_app(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(app_id): Path<String>,
+) -> Response {
+    done(
+        async {
+            let user = chat::authed(&state, &headers).await?;
+            sqlx::query("DELETE FROM user_installs WHERE user_id = ? AND application_id = ?")
+                .bind(&user.id)
+                .bind(&app_id)
+                .execute(&state.db)
+                .await
+                .map_err(chat::db)?;
+            Ok(StatusCode::NO_CONTENT.into_response())
+        }
+        .await,
+    )
 }
 
 async fn app_bot_id(state: &AppState, application_id: &str) -> ApiResult<String> {
@@ -1569,7 +1710,7 @@ async fn interaction_for_webhook(
     token: &str,
 ) -> ApiResult<InteractionRow> {
     let row: InteractionRow = sqlx::query_as(
-        "SELECT id, token, application_id, channel_id, user_id, message_id, nonce, responded, response_message_id, created_at \
+        "SELECT id, token, application_id, kind, channel_id, user_id, message_id, nonce, responded, response_message_id, created_at \
          FROM interactions WHERE token = ? AND application_id = ?",
     )
     .bind(token)
