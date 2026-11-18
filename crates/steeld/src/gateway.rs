@@ -19,7 +19,10 @@ const HEARTBEAT_GRACE: Duration = Duration::from_millis(HEARTBEAT_INTERVAL_MS * 
 const IDENTIFY_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub async fn run(state: AppState, mut socket: WebSocket) {
-    if send(&mut socket, &GatewayFrame::hello(HEARTBEAT_INTERVAL_MS)).await.is_err() {
+    if send(&mut socket, &GatewayFrame::hello(HEARTBEAT_INTERVAL_MS))
+        .await
+        .is_err()
+    {
         return;
     }
 
@@ -46,7 +49,16 @@ pub async fn run(state: AppState, mut socket: WebSocket) {
         }
         // Resume needs stored session state. Ask the client to identify again.
         op::RESUME => {
-            let _ = send(&mut socket, &GatewayFrame { op: op::INVALID_SESSION, d: json!(false), s: None, t: None }).await;
+            let _ = send(
+                &mut socket,
+                &GatewayFrame {
+                    op: op::INVALID_SESSION,
+                    d: json!(false),
+                    s: None,
+                    t: None,
+                },
+            )
+            .await;
             return;
         }
         _ => return,
@@ -158,7 +170,7 @@ pub async fn run(state: AppState, mut socket: WebSocket) {
 
 /// Send a dispatch if this user is a target. Returns false when the socket is gone.
 async fn deliver(socket: &mut WebSocket, user: &User, dispatch: Dispatch, seq: &mut u64) -> bool {
-    if !dispatch.targets.iter().any(|t| *t == user.id) {
+    if !dispatch.targets.contains(&user.id) {
         return true;
     }
     *seq += 1;
@@ -168,7 +180,10 @@ async fn deliver(socket: &mut WebSocket, user: &User, dispatch: Dispatch, seq: &
 
 async fn close(socket: &mut WebSocket, code: u16, reason: &'static str) {
     let _ = socket
-        .send(Message::Close(Some(axum::extract::ws::CloseFrame { code, reason: reason.into() })))
+        .send(Message::Close(Some(axum::extract::ws::CloseFrame {
+            code,
+            reason: reason.into(),
+        })))
         .await;
 }
 

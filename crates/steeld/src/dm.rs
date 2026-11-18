@@ -7,7 +7,10 @@ use axum::{
     routing::{get, put},
     Json, Router,
 };
-use flint_protocol::{channel_type, relationship_type, Channel, CreateDm, Relationship, SendFriendRequest, UpdateRelationship, User};
+use flint_protocol::{
+    channel_type, relationship_type, Channel, CreateDm, Relationship, SendFriendRequest,
+    UpdateRelationship, User,
+};
 use serde_json::json;
 
 use crate::{
@@ -22,7 +25,10 @@ const MAX_GROUP_RECIPIENTS: usize = 9;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route(&format!("{API_PREFIX}/users/@me/channels"), get(my_dms).post(create_dm))
+        .route(
+            &format!("{API_PREFIX}/users/@me/channels"),
+            get(my_dms).post(create_dm),
+        )
         .route(
             &format!("{API_PREFIX}/users/@me/relationships"),
             get(my_relationships).post(send_friend_request),
@@ -45,7 +51,10 @@ async fn authed(state: &AppState, headers: &HeaderMap) -> ApiResult<User> {
 }
 
 /// DM channels the user is in, with recipients.
-pub async fn private_channels_for_user(state: &AppState, user_id: &str) -> Result<Vec<Channel>, sqlx::Error> {
+pub async fn private_channels_for_user(
+    state: &AppState,
+    user_id: &str,
+) -> Result<Vec<Channel>, sqlx::Error> {
     let rows: Vec<(String, i64, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT c.id, c.kind, c.name, c.owner_id FROM channels c JOIN channel_recipients r ON r.channel_id = c.id \
          WHERE r.user_id = ? AND c.guild_id IS NULL ORDER BY CAST(c.id AS INTEGER)",
@@ -60,7 +69,12 @@ pub async fn private_channels_for_user(state: &AppState, user_id: &str) -> Resul
     Ok(out)
 }
 
-async fn dm_channel(state: &AppState, id: String, kind: i64, name: Option<String>) -> Result<Channel, sqlx::Error> {
+async fn dm_channel(
+    state: &AppState,
+    id: String,
+    kind: i64,
+    name: Option<String>,
+) -> Result<Channel, sqlx::Error> {
     let users: Vec<(String, String)> = sqlx::query_as(
         "SELECT u.id, u.username FROM channel_recipients r JOIN users u ON u.id = r.user_id WHERE r.channel_id = ? ORDER BY CAST(u.id AS INTEGER)",
     )
@@ -74,7 +88,10 @@ async fn dm_channel(state: &AppState, id: String, kind: i64, name: Option<String
         name,
         position: 0,
         topic: None,
-        recipients: users.into_iter().map(|(id, username)| chat::plain_user(id, username)).collect(),
+        recipients: users
+            .into_iter()
+            .map(|(id, username)| chat::plain_user(id, username))
+            .collect(),
     })
 }
 
@@ -92,14 +109,23 @@ async fn is_blocked_either_way(state: &AppState, a: &str, b: &str) -> Result<boo
 async fn my_dms(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let result: ApiResult<Response> = async {
         let user = authed(&state, &headers).await?;
-        Ok(Json(private_channels_for_user(&state, &user.id).await.map_err(db)?).into_response())
+        Ok(Json(
+            private_channels_for_user(&state, &user.id)
+                .await
+                .map_err(db)?,
+        )
+        .into_response())
     }
     .await;
     result.unwrap_or_else(|e| e)
 }
 
 /// Open a 1:1 DM (`recipient_id`) or create a group DM (`recipients`, at least two others).
-async fn create_dm(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<CreateDm>) -> Response {
+async fn create_dm(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateDm>,
+) -> Response {
     let result: ApiResult<Response> = async {
         let user = authed(&state, &headers).await?;
         let mut others: Vec<String> = req.recipients.clone();
@@ -180,16 +206,27 @@ async fn create_dm(State(state): State<AppState>, headers: HeaderMap, Json(req):
 // Relationships
 // ---------------------------------------------------------------------------
 
-async fn relationship_kind(state: &AppState, user: &str, target: &str) -> Result<Option<u8>, sqlx::Error> {
-    let row: Option<(i64,)> = sqlx::query_as("SELECT kind FROM relationships WHERE user_id = ? AND target_id = ?")
-        .bind(user)
-        .bind(target)
-        .fetch_optional(&state.db)
-        .await?;
+async fn relationship_kind(
+    state: &AppState,
+    user: &str,
+    target: &str,
+) -> Result<Option<u8>, sqlx::Error> {
+    let row: Option<(i64,)> =
+        sqlx::query_as("SELECT kind FROM relationships WHERE user_id = ? AND target_id = ?")
+            .bind(user)
+            .bind(target)
+            .fetch_optional(&state.db)
+            .await?;
     Ok(row.map(|(k,)| k as u8))
 }
 
-async fn set_pair(state: &AppState, user: &str, target: &str, mine: Option<u8>, theirs: Option<u8>) -> Result<(), sqlx::Error> {
+async fn set_pair(
+    state: &AppState,
+    user: &str,
+    target: &str,
+    mine: Option<u8>,
+    theirs: Option<u8>,
+) -> Result<(), sqlx::Error> {
     let now = chrono::Utc::now().to_rfc3339();
     let mut tx = state.db.begin().await?;
     for (from, to, kind) in [(user, target, mine), (target, user, theirs)] {
@@ -202,14 +239,22 @@ async fn set_pair(state: &AppState, user: &str, target: &str, mine: Option<u8>, 
             }
             None => {
                 sqlx::query("DELETE FROM relationships WHERE user_id = ? AND target_id = ?")
-                    .bind(from).bind(to).execute(&mut *tx).await?;
+                    .bind(from)
+                    .bind(to)
+                    .execute(&mut *tx)
+                    .await?;
             }
         }
     }
     tx.commit().await
 }
 
-async fn relationship_view(state: &AppState, owner: &str, target: &str, kind: u8) -> ApiResult<Relationship> {
+async fn relationship_view(
+    state: &AppState,
+    owner: &str,
+    target: &str,
+    kind: u8,
+) -> ApiResult<Relationship> {
     let row: Option<(String,)> = sqlx::query_as("SELECT username FROM users WHERE id = ?")
         .bind(target)
         .fetch_optional(&state.db)
@@ -217,7 +262,11 @@ async fn relationship_view(state: &AppState, owner: &str, target: &str, kind: u8
         .map_err(db)?;
     let (username,) = row.ok_or_else(|| api_error(StatusCode::NOT_FOUND, 10013, "Unknown user"))?;
     let _ = owner;
-    Ok(Relationship { id: target.to_string(), kind, user: chat::plain_user(target.to_string(), username) })
+    Ok(Relationship {
+        id: target.to_string(),
+        kind,
+        user: chat::plain_user(target.to_string(), username),
+    })
 }
 
 async fn my_relationships(State(state): State<AppState>, headers: HeaderMap) -> Response {
@@ -241,38 +290,92 @@ async fn my_relationships(State(state): State<AppState>, headers: HeaderMap) -> 
 }
 
 async fn publish_relationship(state: &AppState, owner: &str, rel: &Relationship) {
-    state.publish(vec![owner.to_string()], "RELATIONSHIP_ADD", serde_json::to_value(rel).unwrap_or_default());
+    state.publish(
+        vec![owner.to_string()],
+        "RELATIONSHIP_ADD",
+        serde_json::to_value(rel).unwrap_or_default(),
+    );
 }
 
 /// Send a friend request by username.
-async fn send_friend_request(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<SendFriendRequest>) -> Response {
+async fn send_friend_request(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<SendFriendRequest>,
+) -> Response {
     let result: ApiResult<Response> = async {
         let me = authed(&state, &headers).await?;
-        let target: Option<(String, String)> = sqlx::query_as("SELECT id, username FROM users WHERE username = ?")
-            .bind(req.username.trim())
-            .fetch_optional(&state.db)
+        let target: Option<(String, String)> =
+            sqlx::query_as("SELECT id, username FROM users WHERE username = ?")
+                .bind(req.username.trim())
+                .fetch_optional(&state.db)
+                .await
+                .map_err(db)?;
+        let (target_id, target_name) =
+            target.ok_or_else(|| api_error(StatusCode::NOT_FOUND, 10013, "Unknown user"))?;
+        if target_id == me.id {
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                80000,
+                "You cannot friend yourself",
+            ));
+        }
+        let mine = relationship_kind(&state, &me.id, &target_id)
             .await
             .map_err(db)?;
-        let (target_id, target_name) = target.ok_or_else(|| api_error(StatusCode::NOT_FOUND, 10013, "Unknown user"))?;
-        if target_id == me.id {
-            return Err(api_error(StatusCode::BAD_REQUEST, 80000, "You cannot friend yourself"));
-        }
-        let mine = relationship_kind(&state, &me.id, &target_id).await.map_err(db)?;
-        let theirs = relationship_kind(&state, &target_id, &me.id).await.map_err(db)?;
+        let theirs = relationship_kind(&state, &target_id, &me.id)
+            .await
+            .map_err(db)?;
         if mine == Some(relationship_type::BLOCKED) || theirs == Some(relationship_type::BLOCKED) {
-            return Err(api_error(StatusCode::FORBIDDEN, 80000, "Cannot send a friend request to this user"));
+            return Err(api_error(
+                StatusCode::FORBIDDEN,
+                80000,
+                "Cannot send a friend request to this user",
+            ));
         }
         // Already friends, or they already asked us: accept.
-        if mine == Some(relationship_type::INCOMING_REQUEST) || theirs == Some(relationship_type::OUTGOING_REQUEST) {
-            set_pair(&state, &me.id, &target_id, Some(relationship_type::FRIEND), Some(relationship_type::FRIEND)).await.map_err(db)?;
+        if mine == Some(relationship_type::INCOMING_REQUEST)
+            || theirs == Some(relationship_type::OUTGOING_REQUEST)
+        {
+            set_pair(
+                &state,
+                &me.id,
+                &target_id,
+                Some(relationship_type::FRIEND),
+                Some(relationship_type::FRIEND),
+            )
+            .await
+            .map_err(db)?;
         } else if mine.is_none() {
-            set_pair(&state, &me.id, &target_id, Some(relationship_type::OUTGOING_REQUEST), Some(relationship_type::INCOMING_REQUEST)).await.map_err(db)?;
+            set_pair(
+                &state,
+                &me.id,
+                &target_id,
+                Some(relationship_type::OUTGOING_REQUEST),
+                Some(relationship_type::INCOMING_REQUEST),
+            )
+            .await
+            .map_err(db)?;
         }
-        let mine_now = relationship_kind(&state, &me.id, &target_id).await.map_err(db)?.unwrap_or(0);
-        let rel = Relationship { id: target_id.clone(), kind: mine_now, user: chat::plain_user(target_id.clone(), target_name) };
+        let mine_now = relationship_kind(&state, &me.id, &target_id)
+            .await
+            .map_err(db)?
+            .unwrap_or(0);
+        let rel = Relationship {
+            id: target_id.clone(),
+            kind: mine_now,
+            user: chat::plain_user(target_id.clone(), target_name),
+        };
         publish_relationship(&state, &me.id, &rel).await;
-        let theirs_now = relationship_kind(&state, &target_id, &me.id).await.map_err(db)?.unwrap_or(0);
-        let their_view = Relationship { id: me.id.clone(), kind: theirs_now, user: me.clone() };
+        let theirs_now = relationship_kind(&state, &target_id, &me.id)
+            .await
+            .map_err(db)?
+            .unwrap_or(0);
+        let their_view = Relationship {
+            id: me.id.clone(),
+            kind: theirs_now,
+            user: me.clone(),
+        };
         publish_relationship(&state, &target_id, &their_view).await;
         Ok(StatusCode::NO_CONTENT.into_response())
     }
@@ -293,20 +396,33 @@ async fn update_relationship(
             return Err(api_error(StatusCode::BAD_REQUEST, 80000, "Invalid user"));
         }
         let requested = body.and_then(|Json(b)| b.kind);
-        let theirs_before = relationship_kind(&state, &target_id, &me.id).await.map_err(db)?;
-        let mine_before = relationship_kind(&state, &me.id, &target_id).await.map_err(db)?;
+        let theirs_before = relationship_kind(&state, &target_id, &me.id)
+            .await
+            .map_err(db)?;
+        let mine_before = relationship_kind(&state, &me.id, &target_id)
+            .await
+            .map_err(db)?;
 
         let (mine, theirs) = match requested {
             Some(t) if t == relationship_type::BLOCKED => (Some(relationship_type::BLOCKED), None),
             _ => {
                 if mine_before == Some(relationship_type::INCOMING_REQUEST) {
-                    (Some(relationship_type::FRIEND), Some(relationship_type::FRIEND))
+                    (
+                        Some(relationship_type::FRIEND),
+                        Some(relationship_type::FRIEND),
+                    )
                 } else {
-                    return Err(api_error(StatusCode::NOT_FOUND, 10010, "No pending request from this user"));
+                    return Err(api_error(
+                        StatusCode::NOT_FOUND,
+                        10010,
+                        "No pending request from this user",
+                    ));
                 }
             }
         };
-        set_pair(&state, &me.id, &target_id, mine, theirs).await.map_err(db)?;
+        set_pair(&state, &me.id, &target_id, mine, theirs)
+            .await
+            .map_err(db)?;
         let _ = theirs_before;
         publish_pair(&state, &me.id, &target_id).await?;
         Ok(StatusCode::NO_CONTENT.into_response())
@@ -316,14 +432,26 @@ async fn update_relationship(
 }
 
 /// `DELETE` removes a friend, cancels an outgoing request, declines an incoming one, or unblocks.
-async fn remove_relationship(State(state): State<AppState>, headers: HeaderMap, Path(target_id): Path<String>) -> Response {
+async fn remove_relationship(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(target_id): Path<String>,
+) -> Response {
     let result: ApiResult<Response> = async {
         let me = authed(&state, &headers).await?;
-        let mine = relationship_kind(&state, &me.id, &target_id).await.map_err(db)?;
+        let mine = relationship_kind(&state, &me.id, &target_id)
+            .await
+            .map_err(db)?;
         if mine.is_none() {
-            return Err(api_error(StatusCode::NOT_FOUND, 10010, "Unknown relationship"));
+            return Err(api_error(
+                StatusCode::NOT_FOUND,
+                10010,
+                "Unknown relationship",
+            ));
         }
-        set_pair(&state, &me.id, &target_id, None, None).await.map_err(db)?;
+        set_pair(&state, &me.id, &target_id, None, None)
+            .await
+            .map_err(db)?;
         state.publish(
             vec![me.id.clone()],
             "RELATIONSHIP_REMOVE",
@@ -333,7 +461,11 @@ async fn remove_relationship(State(state): State<AppState>, headers: HeaderMap, 
             || mine == Some(relationship_type::OUTGOING_REQUEST)
             || mine == Some(relationship_type::INCOMING_REQUEST)
         {
-            state.publish(vec![target_id.clone()], "RELATIONSHIP_REMOVE", json!({ "id": me.id }));
+            state.publish(
+                vec![target_id.clone()],
+                "RELATIONSHIP_REMOVE",
+                json!({ "id": me.id }),
+            );
         }
         Ok(StatusCode::NO_CONTENT.into_response())
     }
@@ -343,11 +475,25 @@ async fn remove_relationship(State(state): State<AppState>, headers: HeaderMap, 
 
 /// After a change between `me` and `target`, push each side's view of the pair.
 async fn publish_pair(state: &AppState, me: &str, target: &str) -> Result<(), Response> {
-    let my_kind = relationship_kind(state, me, target).await.map_err(db)?.unwrap_or(0);
-    let their_kind = relationship_kind(state, target, me).await.map_err(db)?.unwrap_or(0);
+    let my_kind = relationship_kind(state, me, target)
+        .await
+        .map_err(db)?
+        .unwrap_or(0);
+    let their_kind = relationship_kind(state, target, me)
+        .await
+        .map_err(db)?
+        .unwrap_or(0);
     let my_view = relationship_view(state, me, target, my_kind).await?;
     let their_view = relationship_view(state, target, me, their_kind).await?;
-    state.publish(vec![me.to_string()], "RELATIONSHIP_UPDATE", serde_json::to_value(&my_view).unwrap_or_default());
-    state.publish(vec![target.to_string()], "RELATIONSHIP_UPDATE", serde_json::to_value(&their_view).unwrap_or_default());
+    state.publish(
+        vec![me.to_string()],
+        "RELATIONSHIP_UPDATE",
+        serde_json::to_value(&my_view).unwrap_or_default(),
+    );
+    state.publish(
+        vec![target.to_string()],
+        "RELATIONSHIP_UPDATE",
+        serde_json::to_value(&their_view).unwrap_or_default(),
+    );
     Ok(())
 }

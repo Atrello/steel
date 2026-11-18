@@ -201,6 +201,16 @@ pub struct MessageReference {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Attachment {
+    pub id: String,
+    pub filename: String,
+    #[serde(default)]
+    pub content_type: Option<String>,
+    pub size: u64,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Message {
     pub id: String,
     pub channel_id: String,
@@ -213,6 +223,8 @@ pub struct Message {
     pub message_reference: Option<MessageReference>,
     #[serde(rename = "type", default)]
     pub kind: u8,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

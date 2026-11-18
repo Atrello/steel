@@ -7,7 +7,7 @@ use axum::{
 };
 use flint_protocol::{ApiError, LoginRequest, RegisterRequest, TokenResponse, User};
 
-use crate::{auth, chat, dm, gateway, presence, state::AppState};
+use crate::{auth, chat, dm, gateway, presence, state::AppState, uploads};
 
 pub const API_PREFIX: &str = "/api/v10";
 
@@ -23,6 +23,10 @@ pub fn router(state: AppState) -> Router {
         .merge(chat::routes())
         .merge(dm::routes())
         .merge(presence::routes())
+        .merge(uploads::routes())
+        .layer(axum::extract::DefaultBodyLimit::max(
+            uploads::max_file_bytes() as usize * uploads::MAX_FILES + 1024 * 1024,
+        ))
         .with_state(state)
 }
 

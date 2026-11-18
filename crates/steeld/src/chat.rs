@@ -2,6 +2,8 @@
 //! Phase 1 permissions are membership-only: members can read and post in their guild's channels,
 //! the owner can create channels and delete any message, and authors can edit or delete their own.
 
+use crate::uploads::{self, PendingFile, MAX_FILES};
+use axum::{extract::FromRequest, http::header};
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -10,8 +12,8 @@ use axum::{
     Json, Router,
 };
 use flint_protocol::{
-    channel_type, Channel, CreateChannel, CreateGuild, CreateMessage, EditMessage, Guild, Invite, Message,
-    MessageReference, User,
+    channel_type, Channel, CreateChannel, CreateGuild, CreateMessage, EditMessage, Guild, Invite,
+    Message, MessageReference, User,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -38,7 +40,10 @@ pub fn routes() -> Router<AppState> {
             &format!("{API_PREFIX}/guilds/{{guild_id}}/channels"),
             get(list_channels).post(create_channel),
         )
-        .route(&format!("{API_PREFIX}/channels/{{channel_id}}"), get(get_channel))
+        .route(
+            &format!("{API_PREFIX}/channels/{{channel_id}}"),
+            get(get_channel),
+        )
         .route(
             &format!("{API_PREFIX}/channels/{{channel_id}}/messages"),
             get(list_messages).post(send_message),
@@ -47,9 +52,18 @@ pub fn routes() -> Router<AppState> {
             &format!("{API_PREFIX}/channels/{{channel_id}}/messages/{{message_id}}"),
             axum::routing::patch(edit_message).delete(delete_message),
         )
-        .route(&format!("{API_PREFIX}/channels/{{channel_id}}/typing"), post(typing))
-        .route(&format!("{API_PREFIX}/channels/{{channel_id}}/invites"), post(create_invite))
-        .route(&format!("{API_PREFIX}/invites/{{code}}"), get(get_invite).post(accept_invite))
+        .route(
+            &format!("{API_PREFIX}/channels/{{channel_id}}/typing"),
+            post(typing),
+        )
+        .route(
+            &format!("{API_PREFIX}/channels/{{channel_id}}/invites"),
+            post(create_invite),
+        )
+        .route(
+            &format!("{API_PREFIX}/invites/{{code}}"),
+            get(get_invite).post(accept_invite),
+        )
 }
 
 // ---------------------------------------------------------------------------
@@ -88,7 +102,11 @@ pub struct MessageRow {
 
 fn internal(err: impl std::fmt::Display) -> Response {
     tracing::error!("database error: {err}");
-    api_error(StatusCode::INTERNAL_SERVER_ERROR, 0, "internal server error")
+    api_error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        0,
+        "internal server error",
+    )
 }
 
 fn db(err: sqlx::Error) -> Response {
@@ -113,49 +131,63 @@ async fn authed(state: &AppState, headers: &HeaderMap) -> ApiResult<User> {
 fn check_name(name: &str) -> ApiResult<String> {
     let trimmed = name.trim();
     if trimmed.is_empty() || trimmed.chars().count() > MAX_NAME {
-        return Err(api_error(StatusCode::BAD_REQUEST, 50035, format!("name must be 1-{MAX_NAME} characters")));
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            50035,
+            format!("name must be 1-{MAX_NAME} characters"),
+        ));
     }
     Ok(trimmed.to_string())
 }
 
 /// Access to a channel: guild members for guild channels, recipients for DMs.
-pub async fn require_channel(state: &AppState, channel: &ChannelRow, user_id: &str) -> ApiResult<()> {
+pub async fn require_channel(
+    state: &AppState,
+    channel: &ChannelRow,
+    user_id: &str,
+) -> ApiResult<()> {
     match &channel.guild_id {
         Some(guild_id) => require_member(state, guild_id, user_id).await,
         None => {
-            let found: Option<(i64,)> =
-                sqlx::query_as("SELECT 1 FROM channel_recipients WHERE channel_id = ? AND user_id = ?")
-                    .bind(&channel.id)
-                    .bind(user_id)
-                    .fetch_optional(&state.db)
-                    .await
-                    .map_err(db)?;
+            let found: Option<(i64,)> = sqlx::query_as(
+                "SELECT 1 FROM channel_recipients WHERE channel_id = ? AND user_id = ?",
+            )
+            .bind(&channel.id)
+            .bind(user_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(db)?;
             found.map(|_| ()).ok_or_else(no_access)
         }
     }
 }
 
 /// Everyone who should receive events for a channel.
-pub async fn channel_audience(state: &AppState, channel: &ChannelRow) -> Result<Vec<String>, sqlx::Error> {
+pub async fn channel_audience(
+    state: &AppState,
+    channel: &ChannelRow,
+) -> Result<Vec<String>, sqlx::Error> {
     match &channel.guild_id {
         Some(guild_id) => member_ids(state, guild_id).await,
         None => {
-            let rows: Vec<(String,)> = sqlx::query_as("SELECT user_id FROM channel_recipients WHERE channel_id = ?")
-                .bind(&channel.id)
-                .fetch_all(&state.db)
-                .await?;
+            let rows: Vec<(String,)> =
+                sqlx::query_as("SELECT user_id FROM channel_recipients WHERE channel_id = ?")
+                    .bind(&channel.id)
+                    .fetch_all(&state.db)
+                    .await?;
             Ok(rows.into_iter().map(|(id,)| id).collect())
         }
     }
 }
 
 async fn require_member(state: &AppState, guild_id: &str, user_id: &str) -> ApiResult<()> {
-    let found: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?")
-        .bind(guild_id)
-        .bind(user_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(db)?;
+    let found: Option<(i64,)> =
+        sqlx::query_as("SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?")
+            .bind(guild_id)
+            .bind(user_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(db)?;
     found.map(|_| ()).ok_or_else(no_access)
 }
 
@@ -187,7 +219,10 @@ pub async fn channel_json(state: &AppState, row: ChannelRow) -> ApiResult<Channe
         .fetch_all(&state.db)
         .await
         .map_err(db)?;
-        users.into_iter().map(|(id, username)| plain_user(id, username)).collect()
+        users
+            .into_iter()
+            .map(|(id, username)| plain_user(id, username))
+            .collect()
     } else {
         Vec::new()
     };
@@ -203,10 +238,19 @@ pub async fn channel_json(state: &AppState, row: ChannelRow) -> ApiResult<Channe
 }
 
 pub fn plain_user(id: String, username: String) -> User {
-    User { id, username, global_name: None, avatar: None, bot: false }
+    User {
+        id,
+        username,
+        global_name: None,
+        avatar: None,
+        bot: false,
+    }
 }
 
-async fn guild_channel_rows(state: &AppState, guild_id: &str) -> Result<Vec<ChannelRow>, sqlx::Error> {
+async fn guild_channel_rows(
+    state: &AppState,
+    guild_id: &str,
+) -> Result<Vec<ChannelRow>, sqlx::Error> {
     sqlx::query_as(
         "SELECT id, guild_id, kind, name, topic, position FROM channels WHERE guild_id = ? ORDER BY position, CAST(id AS INTEGER)",
     )
@@ -229,19 +273,34 @@ fn guild_channel(row: ChannelRow) -> Channel {
 }
 
 async fn guild_channels(state: &AppState, guild_id: &str) -> ApiResult<Vec<Channel>> {
-    Ok(guild_channel_rows(state, guild_id).await.map_err(db)?.into_iter().map(guild_channel).collect())
+    Ok(guild_channel_rows(state, guild_id)
+        .await
+        .map_err(db)?
+        .into_iter()
+        .map(guild_channel)
+        .collect())
 }
 
 async fn guild_json(state: &AppState, row: GuildRow, with_channels: bool) -> ApiResult<Guild> {
-    let channels = if with_channels { guild_channels(state, &row.id).await? } else { Vec::new() };
-    Ok(Guild { id: row.id, name: row.name, owner_id: row.owner_id, channels })
+    let channels = if with_channels {
+        guild_channels(state, &row.id).await?
+    } else {
+        Vec::new()
+    };
+    Ok(Guild {
+        id: row.id,
+        name: row.name,
+        owner_id: row.owner_id,
+        channels,
+    })
 }
 
 async fn member_ids(state: &AppState, guild_id: &str) -> Result<Vec<String>, sqlx::Error> {
-    let rows: Vec<(String,)> = sqlx::query_as("SELECT user_id FROM guild_members WHERE guild_id = ?")
-        .bind(guild_id)
-        .fetch_all(&state.db)
-        .await?;
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT user_id FROM guild_members WHERE guild_id = ?")
+            .bind(guild_id)
+            .fetch_all(&state.db)
+            .await?;
     Ok(rows.into_iter().map(|(id,)| id).collect())
 }
 
@@ -256,8 +315,17 @@ pub async fn guilds_for_user(state: &AppState, user_id: &str) -> Result<Vec<Guil
     .await?;
     let mut guilds = Vec::with_capacity(rows.len());
     for row in rows {
-        let channels = guild_channel_rows(state, &row.id).await?.into_iter().map(guild_channel).collect();
-        guilds.push(Guild { id: row.id, name: row.name, owner_id: row.owner_id, channels });
+        let channels = guild_channel_rows(state, &row.id)
+            .await?
+            .into_iter()
+            .map(guild_channel)
+            .collect();
+        guilds.push(Guild {
+            id: row.id,
+            name: row.name,
+            owner_id: row.owner_id,
+            channels,
+        });
     }
     Ok(guilds)
 }
@@ -266,7 +334,13 @@ pub fn message_json(row: MessageRow) -> Message {
     Message {
         id: row.id,
         channel_id: row.channel_id.clone(),
-        author: User { id: row.author_id, username: row.username, global_name: None, avatar: None, bot: false },
+        author: User {
+            id: row.author_id,
+            username: row.username,
+            global_name: None,
+            avatar: None,
+            bot: false,
+        },
         content: row.content,
         timestamp: row.created_at,
         edited_timestamp: row.edited_at,
@@ -276,12 +350,12 @@ pub fn message_json(row: MessageRow) -> Message {
             guild_id: row.guild_id,
         }),
         kind: 0,
+        attachments: Vec::new(),
     }
 }
 
 const MESSAGE_SELECT: &str = "SELECT m.id, m.channel_id, m.author_id, u.username, m.content, m.created_at, m.edited_at, \
      m.reply_to_id, c.guild_id FROM messages m JOIN users u ON u.id = m.author_id JOIN channels c ON c.id = m.channel_id";
-
 
 pub async fn message_by_id(state: &AppState, message_id: &str) -> ApiResult<MessageRow> {
     sqlx::query_as(&format!("{MESSAGE_SELECT} WHERE m.id = ?"))
@@ -299,21 +373,33 @@ fn now_iso() -> String {
 fn random_code() -> String {
     const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
     let token = auth::new_token();
-    token.bytes().take(8).map(|b| ALPHABET[(b as usize) % ALPHABET.len()] as char).collect()
+    token
+        .bytes()
+        .take(8)
+        .map(|b| ALPHABET[(b as usize) % ALPHABET.len()] as char)
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
 // Guilds
 // ---------------------------------------------------------------------------
 
-async fn create_guild(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<CreateGuild>) -> Response {
+async fn create_guild(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateGuild>,
+) -> Response {
     match create_guild_inner(&state, &headers, req).await {
         Ok(v) => v,
         Err(e) => e,
     }
 }
 
-async fn create_guild_inner(state: &AppState, headers: &HeaderMap, req: CreateGuild) -> ApiResult<Response> {
+async fn create_guild_inner(
+    state: &AppState,
+    headers: &HeaderMap,
+    req: CreateGuild,
+) -> ApiResult<Response> {
     let user = authed(state, headers).await?;
     let name = check_name(&req.name)?;
     let guild_id = auth::new_id();
@@ -322,18 +408,40 @@ async fn create_guild_inner(state: &AppState, headers: &HeaderMap, req: CreateGu
 
     let mut tx = state.db.begin().await.map_err(db)?;
     sqlx::query("INSERT INTO guilds (id, name, owner_id, created_at) VALUES (?, ?, ?, ?)")
-        .bind(&guild_id).bind(&name).bind(&user.id).bind(&now)
-        .execute(&mut *tx).await.map_err(db)?;
+        .bind(&guild_id)
+        .bind(&name)
+        .bind(&user.id)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
     sqlx::query("INSERT INTO guild_members (guild_id, user_id, joined_at) VALUES (?, ?, ?)")
-        .bind(&guild_id).bind(&user.id).bind(&now)
-        .execute(&mut *tx).await.map_err(db)?;
+        .bind(&guild_id)
+        .bind(&user.id)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await
+        .map_err(db)?;
     sqlx::query("INSERT INTO channels (id, guild_id, kind, name, position, created_at) VALUES (?, ?, ?, 'general', 0, ?)")
         .bind(&general_id).bind(&guild_id).bind(channel_type::GUILD_TEXT as i64).bind(&now)
         .execute(&mut *tx).await.map_err(db)?;
     tx.commit().await.map_err(db)?;
 
-    let guild = guild_json(state, GuildRow { id: guild_id, name, owner_id: user.id.clone() }, true).await?;
-    state.publish(vec![user.id.clone()], "GUILD_CREATE", serde_json::to_value(&guild).unwrap_or_default());
+    let guild = guild_json(
+        state,
+        GuildRow {
+            id: guild_id,
+            name,
+            owner_id: user.id.clone(),
+        },
+        true,
+    )
+    .await?;
+    state.publish(
+        vec![user.id.clone()],
+        "GUILD_CREATE",
+        serde_json::to_value(&guild).unwrap_or_default(),
+    );
     Ok((StatusCode::CREATED, Json(guild)).into_response())
 }
 
@@ -347,7 +455,11 @@ async fn my_guilds(State(state): State<AppState>, headers: HeaderMap) -> Respons
     result.unwrap_or_else(|e| e)
 }
 
-async fn get_guild(State(state): State<AppState>, headers: HeaderMap, Path(guild_id): Path<String>) -> Response {
+async fn get_guild(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(guild_id): Path<String>,
+) -> Response {
     let result: ApiResult<Response> = async {
         let user = authed(&state, &headers).await?;
         require_member(&state, &guild_id, &user.id).await?;
@@ -362,7 +474,11 @@ async fn get_guild(State(state): State<AppState>, headers: HeaderMap, Path(guild
 // Channels
 // ---------------------------------------------------------------------------
 
-async fn list_channels(State(state): State<AppState>, headers: HeaderMap, Path(guild_id): Path<String>) -> Response {
+async fn list_channels(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(guild_id): Path<String>,
+) -> Response {
     let result: ApiResult<Response> = async {
         let user = authed(&state, &headers).await?;
         require_member(&state, &guild_id, &user.id).await?;
@@ -408,7 +524,11 @@ async fn create_channel(
     result.unwrap_or_else(|e| e)
 }
 
-async fn get_channel(State(state): State<AppState>, headers: HeaderMap, Path(channel_id): Path<String>) -> Response {
+async fn get_channel(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(channel_id): Path<String>,
+) -> Response {
     let result: ApiResult<Response> = async {
         let user = authed(&state, &headers).await?;
         let channel = channel_row(&state, &channel_id).await?;
@@ -453,7 +573,8 @@ async fn list_messages(
             .bind(&channel_id).bind(limit)
             .fetch_all(&state.db).await.map_err(db)?,
         };
-        let messages: Vec<Message> = rows.into_iter().map(message_json).collect();
+        let mut messages: Vec<Message> = rows.into_iter().map(message_json).collect();
+        uploads::hydrate(&state, &mut messages).await.map_err(db)?;
         Ok(Json(messages).into_response())
     }
     .await;
@@ -464,17 +585,31 @@ async fn send_message(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(channel_id): Path<String>,
-    Json(req): Json<CreateMessage>,
+    req: axum::extract::Request,
 ) -> Response {
     let result: ApiResult<Response> = async {
         let user = authed(&state, &headers).await?;
         let channel = channel_row(&state, &channel_id).await?;
         require_channel(&state, &channel, &user.id).await?;
-        let content = req.content.trim_end().to_string();
-        if content.trim().is_empty() || content.chars().count() > MAX_CONTENT {
-            return Err(api_error(StatusCode::BAD_REQUEST, 50035, format!("content must be 1-{MAX_CONTENT} characters")));
+
+        let is_multipart = headers
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with("multipart/form-data"));
+        let (payload, files) = if is_multipart {
+            read_multipart(&state, req).await?
+        } else {
+            (read_json(req).await?, Vec::new())
+        };
+
+        let content = payload.content.trim_end().to_string();
+        if content.chars().count() > MAX_CONTENT {
+            return Err(api_error(StatusCode::BAD_REQUEST, 50035, format!("content must be at most {MAX_CONTENT} characters")));
         }
-        let reply_to = match req.message_reference.as_ref().and_then(|r| r.message_id.clone()) {
+        if content.trim().is_empty() && files.is_empty() {
+            return Err(api_error(StatusCode::BAD_REQUEST, 50035, "a message needs content or a file"));
+        }
+        let reply_to = match payload.message_reference.as_ref().and_then(|r| r.message_id.clone()) {
             Some(reply_id) => {
                 let target = message_by_id(&state, &reply_id).await?;
                 if target.channel_id != channel_id {
@@ -484,18 +619,100 @@ async fn send_message(
             }
             None => None,
         };
+
         let message_id = auth::new_id();
         let now = now_iso();
         sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(&message_id).bind(&channel_id).bind(&user.id).bind(&content).bind(reply_to).bind(&now)
             .execute(&state.db).await.map_err(db)?;
-        let message = message_json(message_by_id(&state, &message_id).await?);
+        for file in files {
+            if let Err(e) = uploads::store(&state, &channel_id, &message_id, file).await {
+                // Do not leave a half-sent message behind.
+                let _ = uploads::remove_for_message(&state, &message_id).await;
+                let _ = sqlx::query("DELETE FROM messages WHERE id = ?").bind(&message_id).execute(&state.db).await;
+                return Err(e);
+            }
+        }
+
+        let mut out = vec![message_json(message_by_id(&state, &message_id).await?)];
+        uploads::hydrate(&state, &mut out).await.map_err(db)?;
+        let message = out.remove(0);
         let targets = channel_audience(&state, &channel).await.map_err(db)?;
         state.publish(targets, "MESSAGE_CREATE", serde_json::to_value(&message).unwrap_or_default());
         Ok((StatusCode::OK, Json(message)).into_response())
     }
     .await;
     result.unwrap_or_else(|e| e)
+}
+
+/// JSON body: a plain `CreateMessage`.
+async fn read_json(req: axum::extract::Request) -> ApiResult<CreateMessage> {
+    let bytes = axum::body::to_bytes(req.into_body(), 64 * 1024)
+        .await
+        .map_err(|_| {
+            api_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                50035,
+                "request body too large",
+            )
+        })?;
+    serde_json::from_slice(&bytes)
+        .map_err(|_| api_error(StatusCode::BAD_REQUEST, 50109, "invalid JSON body"))
+}
+
+/// Multipart body: `payload_json` holds the message, `files[n]` hold the attachments.
+async fn read_multipart(
+    state: &AppState,
+    req: axum::extract::Request,
+) -> ApiResult<(CreateMessage, Vec<PendingFile>)> {
+    let bad = |m: &str| api_error(StatusCode::BAD_REQUEST, 50035, m.to_string());
+    let mut multipart = axum::extract::Multipart::from_request(req, state)
+        .await
+        .map_err(|_| bad("invalid multipart body"))?;
+    let mut payload: Option<CreateMessage> = None;
+    let mut files = Vec::new();
+    let max_bytes = uploads::max_file_bytes();
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|_| bad("invalid multipart body"))?
+    {
+        let name = field.name().unwrap_or("").to_string();
+        if name == "payload_json" {
+            let text = field
+                .text()
+                .await
+                .map_err(|_| bad("invalid payload_json"))?;
+            payload =
+                Some(serde_json::from_str(&text).map_err(|_| bad("payload_json is not valid"))?);
+        } else if name.starts_with("files") {
+            if files.len() >= MAX_FILES {
+                return Err(bad("too many files on one message"));
+            }
+            let filename = field.file_name().unwrap_or("file").to_string();
+            let content_type = field.content_type().map(|c| c.to_string());
+            let bytes = field.bytes().await.map_err(|_| bad("invalid file part"))?;
+            if bytes.len() as u64 > max_bytes {
+                return Err(api_error(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    40005,
+                    "file is too large",
+                ));
+            }
+            files.push(PendingFile {
+                filename,
+                content_type,
+                bytes: bytes.to_vec(),
+            });
+        }
+    }
+    Ok((
+        payload.unwrap_or(CreateMessage {
+            content: String::new(),
+            message_reference: None,
+        }),
+        files,
+    ))
 }
 
 async fn edit_message(
@@ -515,15 +732,29 @@ async fn edit_message(
         }
         let content = req.content.trim_end().to_string();
         if content.trim().is_empty() || content.chars().count() > MAX_CONTENT {
-            return Err(api_error(StatusCode::BAD_REQUEST, 50035, format!("content must be 1-{MAX_CONTENT} characters")));
+            return Err(api_error(
+                StatusCode::BAD_REQUEST,
+                50035,
+                format!("content must be 1-{MAX_CONTENT} characters"),
+            ));
         }
         sqlx::query("UPDATE messages SET content = ?, edited_at = ? WHERE id = ?")
-            .bind(&content).bind(now_iso()).bind(&message_id)
-            .execute(&state.db).await.map_err(db)?;
-        let message = message_json(message_by_id(&state, &message_id).await?);
+            .bind(&content)
+            .bind(now_iso())
+            .bind(&message_id)
+            .execute(&state.db)
+            .await
+            .map_err(db)?;
+        let mut out = vec![message_json(message_by_id(&state, &message_id).await?)];
+        uploads::hydrate(&state, &mut out).await.map_err(db)?;
+        let message = out.remove(0);
         let channel = channel_row(&state, &channel_id).await?;
         let targets = channel_audience(&state, &channel).await.map_err(db)?;
-        state.publish(targets, "MESSAGE_UPDATE", serde_json::to_value(&message).unwrap_or_default());
+        state.publish(
+            targets,
+            "MESSAGE_UPDATE",
+            serde_json::to_value(&message).unwrap_or_default(),
+        );
         Ok(Json(message).into_response())
     }
     .await;
@@ -549,7 +780,14 @@ async fn delete_message(
         if existing.author_id != user.id && !is_guild_owner {
             return Err(no_access());
         }
-        sqlx::query("DELETE FROM messages WHERE id = ?").bind(&message_id).execute(&state.db).await.map_err(db)?;
+        uploads::remove_for_message(&state, &message_id)
+            .await
+            .map_err(db)?;
+        sqlx::query("DELETE FROM messages WHERE id = ?")
+            .bind(&message_id)
+            .execute(&state.db)
+            .await
+            .map_err(db)?;
         let targets = channel_audience(&state, &channel).await.map_err(db)?;
         state.publish(
             targets,
@@ -562,7 +800,11 @@ async fn delete_message(
     result.unwrap_or_else(|e| e)
 }
 
-async fn typing(State(state): State<AppState>, headers: HeaderMap, Path(channel_id): Path<String>) -> Response {
+async fn typing(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(channel_id): Path<String>,
+) -> Response {
     let result: ApiResult<Response> = async {
         let user = authed(&state, &headers).await?;
         let channel = channel_row(&state, &channel_id).await?;
@@ -588,7 +830,11 @@ async fn typing(State(state): State<AppState>, headers: HeaderMap, Path(channel_
 // Invites
 // ---------------------------------------------------------------------------
 
-async fn create_invite(State(state): State<AppState>, headers: HeaderMap, Path(channel_id): Path<String>) -> Response {
+async fn create_invite(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(channel_id): Path<String>,
+) -> Response {
     let result: ApiResult<Response> = async {
         let user = authed(&state, &headers).await?;
         let channel = channel_row(&state, &channel_id).await?;
@@ -622,21 +868,40 @@ async fn get_invite(State(state): State<AppState>, Path(code): Path<String>) -> 
         let (guild_id, channel_id) = invite_row(&state, &code).await?;
         let guild = guild_json(&state, guild_row(&state, &guild_id).await?, false).await?;
         let channel = channel_json(&state, channel_row(&state, &channel_id).await?).await?;
-        Ok(Json(Invite { code, guild, channel }).into_response())
+        Ok(Json(Invite {
+            code,
+            guild,
+            channel,
+        })
+        .into_response())
     }
     .await;
     result.unwrap_or_else(|e| e)
 }
 
-async fn accept_invite(State(state): State<AppState>, headers: HeaderMap, Path(code): Path<String>) -> Response {
+async fn accept_invite(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(code): Path<String>,
+) -> Response {
     let result: ApiResult<Response> = async {
         let user = authed(&state, &headers).await?;
         let (guild_id, _channel_id) = invite_row(&state, &code).await?;
-        sqlx::query("INSERT OR IGNORE INTO guild_members (guild_id, user_id, joined_at) VALUES (?, ?, ?)")
-            .bind(&guild_id).bind(&user.id).bind(now_iso())
-            .execute(&state.db).await.map_err(db)?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO guild_members (guild_id, user_id, joined_at) VALUES (?, ?, ?)",
+        )
+        .bind(&guild_id)
+        .bind(&user.id)
+        .bind(now_iso())
+        .execute(&state.db)
+        .await
+        .map_err(db)?;
         let guild = guild_json(&state, guild_row(&state, &guild_id).await?, true).await?;
-        state.publish(vec![user.id.clone()], "GUILD_CREATE", serde_json::to_value(&guild).unwrap_or_default());
+        state.publish(
+            vec![user.id.clone()],
+            "GUILD_CREATE",
+            serde_json::to_value(&guild).unwrap_or_default(),
+        );
         let members = member_ids(&state, &guild_id).await.map_err(db)?;
         let member = json!({ "guild_id": guild_id, "user": user });
         let others: Vec<String> = members.into_iter().filter(|m| *m != user.id).collect();

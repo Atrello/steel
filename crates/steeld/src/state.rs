@@ -14,11 +14,19 @@ pub struct AppState {
 impl AppState {
     pub fn new(db: Db) -> Self {
         let (events, _) = broadcast::channel(1024);
-        Self { db, events, presence: Arc::new(PresenceTracker::default()) }
+        Self {
+            db,
+            events,
+            presence: Arc::new(PresenceTracker::default()),
+        }
     }
 
     /// Publish a dispatch to the connected users in `targets`. No-op when nobody is connected.
     pub fn publish(&self, targets: Vec<String>, event: &'static str, data: serde_json::Value) {
-        let _ = self.events.send(crate::events::Dispatch { targets, event, data });
+        let _ = self.events.send(crate::events::Dispatch {
+            targets,
+            event,
+            data,
+        });
     }
 }

@@ -36,7 +36,10 @@ impl PresenceTracker {
     /// Register a new gateway connection. Returns true when this is the user's first connection.
     pub fn connect(&self, user_id: &str) -> bool {
         let mut map = self.sessions.lock().unwrap_or_else(|e| e.into_inner());
-        let entry = map.entry(user_id.to_string()).or_insert(Session { connections: 0, status: status::ONLINE.into() });
+        let entry = map.entry(user_id.to_string()).or_insert(Session {
+            connections: 0,
+            status: status::ONLINE.into(),
+        });
         entry.connections += 1;
         entry.connections == 1
     }
@@ -76,7 +79,10 @@ impl PresenceTracker {
 }
 
 /// Users who should hear about `user_id`'s presence: guild co-members, DM peers and friends.
-pub async fn presence_audience(state: &AppState, user_id: &str) -> Result<Vec<String>, sqlx::Error> {
+pub async fn presence_audience(
+    state: &AppState,
+    user_id: &str,
+) -> Result<Vec<String>, sqlx::Error> {
     let rows: Vec<(String,)> = sqlx::query_as(
         "SELECT DISTINCT other FROM ( \
             SELECT m2.user_id AS other FROM guild_members m1 JOIN guild_members m2 ON m2.guild_id = m1.guild_id WHERE m1.user_id = ? \
@@ -114,7 +120,10 @@ pub async fn broadcast_presence(state: &AppState, user_id: &str) {
 }
 
 /// Read state for the user's channels, sent in READY.
-pub async fn read_states_for_user(state: &AppState, user_id: &str) -> Result<Vec<ReadState>, sqlx::Error> {
+pub async fn read_states_for_user(
+    state: &AppState,
+    user_id: &str,
+) -> Result<Vec<ReadState>, sqlx::Error> {
     let rows: Vec<(String, Option<String>)> =
         sqlx::query_as("SELECT channel_id, last_message_id FROM read_states WHERE user_id = ?")
             .bind(user_id)
@@ -122,7 +131,11 @@ pub async fn read_states_for_user(state: &AppState, user_id: &str) -> Result<Vec
             .await?;
     Ok(rows
         .into_iter()
-        .map(|(id, last)| ReadState { id, last_message_id: last, mention_count: 0 })
+        .map(|(id, last)| ReadState {
+            id,
+            last_message_id: last,
+            mention_count: 0,
+        })
         .collect())
 }
 

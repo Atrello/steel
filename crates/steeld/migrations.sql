@@ -69,6 +69,17 @@ CREATE TABLE IF NOT EXISTS read_states (
     PRIMARY KEY (user_id, channel_id)
 );
 
+CREATE TABLE IF NOT EXISTS attachments (
+    id           TEXT PRIMARY KEY,
+    message_id   TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    channel_id   TEXT NOT NULL,
+    filename     TEXT NOT NULL,
+    content_type TEXT,
+    size         INTEGER NOT NULL,
+    path         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS attachments_message_idx ON attachments (message_id);
+
 CREATE TABLE IF NOT EXISTS invites (
     code       TEXT PRIMARY KEY,
     guild_id   TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
