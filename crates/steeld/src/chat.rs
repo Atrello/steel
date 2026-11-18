@@ -262,6 +262,11 @@ pub async fn channel_json(state: &AppState, row: ChannelRow) -> ApiResult<Channe
     let permission_overwrites = crate::channels::overwrites_for(state, &row.id)
         .await
         .map_err(db)?;
+    let thread_metadata = if (10..=12).contains(&row.kind) {
+        crate::threads::metadata(state, &row.id).await.map_err(db)?
+    } else {
+        None
+    };
     Ok(Channel {
         id: row.id,
         kind: row.kind as u8,
@@ -272,6 +277,8 @@ pub async fn channel_json(state: &AppState, row: ChannelRow) -> ApiResult<Channe
         parent_id: row.parent_id,
         permission_overwrites,
         recipients,
+        thread_metadata,
+        owner_id: None,
     })
 }
 
@@ -290,7 +297,7 @@ async fn guild_channel_rows(
     guild_id: &str,
 ) -> Result<Vec<ChannelRow>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT id, guild_id, kind, name, topic, position, parent_id FROM channels WHERE guild_id = ? ORDER BY position, CAST(id AS INTEGER)",
+        "SELECT id, guild_id, kind, name, topic, position, parent_id FROM channels WHERE guild_id = ? AND kind NOT IN (10, 11, 12) ORDER BY position, CAST(id AS INTEGER)",
     )
     .bind(guild_id)
     .fetch_all(&state.db)
@@ -309,6 +316,8 @@ fn guild_channel(row: ChannelRow) -> Channel {
         parent_id: row.parent_id,
         permission_overwrites: Vec::new(),
         recipients: Vec::new(),
+        thread_metadata: None,
+        owner_id: None,
     }
 }
 

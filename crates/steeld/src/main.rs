@@ -19,6 +19,7 @@ mod roles;
 mod search;
 mod session;
 mod state;
+mod threads;
 mod uploads;
 
 use std::net::SocketAddr;
