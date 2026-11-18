@@ -434,7 +434,7 @@ pub fn message_json(row: MessageRow) -> Message {
 
 pub const MESSAGE_SELECT: &str = "SELECT m.id, m.channel_id, m.author_id, u.username, m.content, m.created_at, m.edited_at, \
      m.reply_to_id, c.guild_id, \
-     EXISTS (SELECT 1 FROM applications a WHERE a.bot_user_id = m.author_id) AS bot, \
+     CASE WHEN EXISTS (SELECT 1 FROM applications a WHERE a.bot_user_id = m.author_id) THEN 1 ELSE 0 END AS bot, \
      COALESCE((SELECT e.flags FROM message_extras e WHERE e.message_id = m.id), 0) AS flags, \
      COALESCE((SELECT e.components FROM message_extras e WHERE e.message_id = m.id), '[]') AS components \
      FROM messages m JOIN users u ON u.id = m.author_id JOIN channels c ON c.id = m.channel_id";
@@ -1071,7 +1071,7 @@ async fn accept_invite(
             return Err(no_access());
         }
         sqlx::query(&crate::db::sql(
-            "INSERT OR IGNORE INTO guild_members (guild_id, user_id, joined_at) VALUES (?, ?, ?)",
+            "INSERT INTO guild_members (guild_id, user_id, joined_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING",
         ))
         .bind(&guild_id)
         .bind(&user.id)

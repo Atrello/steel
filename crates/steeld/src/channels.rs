@@ -129,7 +129,7 @@ pub async fn write_overwrites(
     .await
     .map_err(chat::db)?;
     for (id, kind, allow, deny) in parsed {
-        sqlx::query(&crate::db::sql("INSERT OR REPLACE INTO overwrites (channel_id, target_id, target_type, allow, deny) VALUES (?, ?, ?, ?, ?)"))
+        sqlx::query(&crate::db::sql("INSERT INTO overwrites (channel_id, target_id, target_type, allow, deny) VALUES (?, ?, ?, ?, ?) ON CONFLICT (channel_id, target_id) DO UPDATE SET target_type = excluded.target_type, allow = excluded.allow, deny = excluded.deny"))
             .bind(channel_id)
             .bind(id)
             .bind(kind)

@@ -1,0 +1,129 @@
+CREATE TABLE IF NOT EXISTS users (
+    id            TEXT PRIMARY KEY,
+    username      TEXT NOT NULL,
+    email         TEXT,
+    password_hash TEXT NOT NULL,
+    created_at    TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS tokens (
+    token_hash TEXT PRIMARY KEY,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS guilds (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    owner_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS guild_members (
+    guild_id  TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    joined_at TEXT NOT NULL,
+    nick      TEXT,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS guild_bans (
+    guild_id   TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS channels (
+    id         TEXT PRIMARY KEY,
+    guild_id   TEXT REFERENCES guilds(id) ON DELETE CASCADE,
+    kind       INTEGER NOT NULL,
+    name       TEXT,
+    topic      TEXT,
+    position   INTEGER NOT NULL DEFAULT 0,
+    owner_id   TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS channel_recipients (
+    channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (channel_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS relationships (
+    user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    target_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind      INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, target_id)
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id          TEXT PRIMARY KEY,
+    channel_id  TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    author_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content     TEXT NOT NULL,
+    reply_to_id TEXT,
+    created_at  TEXT NOT NULL,
+    edited_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS messages_channel_idx ON messages (channel_id, id);
+
+CREATE TABLE IF NOT EXISTS read_states (
+    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    channel_id      TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    last_message_id TEXT,
+    PRIMARY KEY (user_id, channel_id)
+);
+
+CREATE TABLE IF NOT EXISTS attachments (
+    id           TEXT PRIMARY KEY,
+    message_id   TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    channel_id   TEXT NOT NULL,
+    filename     TEXT NOT NULL,
+    content_type TEXT,
+    size         INTEGER NOT NULL,
+    path         TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS attachments_message_idx ON attachments (message_id);
+
+CREATE TABLE IF NOT EXISTS pending_uploads (
+    token        TEXT PRIMARY KEY,
+    channel_id   TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    filename     TEXT NOT NULL,
+    content_type TEXT,
+    size         INTEGER NOT NULL,
+    path         TEXT,
+    uploaded     INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS invites (
+    code       TEXT PRIMARY KEY,
+    guild_id   TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    inviter_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS reactions (
+    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    emoji      TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (message_id, user_id, emoji)
+);
+
+CREATE TABLE IF NOT EXISTS pins (
+    channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+    pinned_at  TEXT NOT NULL,
+    pinned_by  TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (channel_id, message_id)
+);
+
+-- Usernames and emails are unique and matched case-insensitively (SQLite used COLLATE NOCASE).
+CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower_idx ON users (lower(username));
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_idx ON users (lower(email)) WHERE email IS NOT NULL;

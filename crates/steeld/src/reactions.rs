@@ -129,7 +129,7 @@ async fn add_own(
         if already.is_none() && distinct >= MAX_REACTIONS_PER_MESSAGE {
             return Err(api_error(StatusCode::BAD_REQUEST, 90001, "too many different reactions on this message"));
         }
-        sqlx::query(&crate::db::sql("INSERT OR IGNORE INTO reactions (message_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?)"))
+        sqlx::query(&crate::db::sql("INSERT INTO reactions (message_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING"))
             .bind(&message_id)
             .bind(&user_id)
             .bind(&key)

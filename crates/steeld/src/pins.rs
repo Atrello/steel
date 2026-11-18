@@ -108,7 +108,7 @@ async fn pin(
         if already.is_none() && count >= MAX_PINS {
             return Err(api_error(StatusCode::BAD_REQUEST, 30003, "maximum number of pinned messages reached"));
         }
-        sqlx::query(&crate::db::sql("INSERT OR IGNORE INTO pins (channel_id, message_id, pinned_at, pinned_by) VALUES (?, ?, ?, ?)"))
+        sqlx::query(&crate::db::sql("INSERT INTO pins (channel_id, message_id, pinned_at, pinned_by) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING"))
             .bind(&channel_id)
             .bind(&message_id)
             .bind(chrono::Utc::now().to_rfc3339())
