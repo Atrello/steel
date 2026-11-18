@@ -8,6 +8,8 @@ mod db;
 mod dm;
 mod events;
 mod gateway;
+mod invite_page;
+mod member_list;
 mod members;
 mod perms;
 mod pins;
@@ -19,6 +21,7 @@ mod roles;
 mod search;
 mod session;
 mod state;
+mod threads;
 mod uploads;
 
 use std::net::SocketAddr;
