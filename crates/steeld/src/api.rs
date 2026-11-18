@@ -21,7 +21,10 @@ pub fn router(state: AppState) -> Router {
         .route(&format!("{API_PREFIX}/gateway"), get(gateway_info))
         .route(&format!("{API_PREFIX}/auth/register"), post(register))
         .route(&format!("{API_PREFIX}/auth/login"), post(login))
-        .route(&format!("{API_PREFIX}/users/@me"), get(me))
+        .route(
+            &format!("{API_PREFIX}/users/@me"),
+            get(me).patch(crate::profile::edit_me),
+        )
         .route("/gateway", get(gateway_socket))
         .merge(chat::routes())
         .merge(dm::routes())
