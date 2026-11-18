@@ -9,7 +9,7 @@ use flint_protocol::{ApiError, LoginRequest, RegisterRequest, TokenResponse, Use
 
 use crate::{
     auth, bots, chat, dm, gateway, members, pins, polls, presence, reactions, search,
-    state::AppState, uploads,
+    state::AppState, threads, uploads,
 };
 
 pub const API_PREFIX: &str = "/api/v10";
@@ -31,6 +31,7 @@ pub fn router(state: AppState) -> Router {
         .merge(reactions::routes())
         .merge(pins::routes())
         .merge(polls::routes())
+        .merge(threads::routes())
         .merge(search::routes())
         .merge(crate::profile::routes())
         .merge(crate::roles::routes())

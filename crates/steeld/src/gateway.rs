@@ -179,6 +179,18 @@ async fn serve(
                                     presence::broadcast_presence(state, &user.id).await;
                                 }
                             }
+                            op::GUILD_SUBSCRIBE => {
+                                let mut failed = false;
+                                for reply in crate::member_list::answer(state, &user.id, &frame.d).await {
+                                    if send(socket, &reply).await.is_err() {
+                                        failed = true;
+                                        break;
+                                    }
+                                }
+                                if failed {
+                                    break;
+                                }
+                            }
                             _ => {}
                         }
                     }

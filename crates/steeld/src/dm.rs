@@ -94,6 +94,8 @@ async fn dm_channel(
             .into_iter()
             .map(|(id, username)| chat::plain_user(id, username))
             .collect(),
+        thread_metadata: None,
+        owner_id: None,
     })
 }
 
