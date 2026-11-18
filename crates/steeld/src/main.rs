@@ -6,6 +6,7 @@ mod channels;
 mod chat;
 mod db;
 mod dm;
+mod emojis;
 mod events;
 mod gateway;
 mod invite_page;
