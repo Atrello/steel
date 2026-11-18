@@ -2,6 +2,7 @@ mod api;
 mod auth;
 mod chat;
 mod db;
+mod dm;
 mod events;
 mod gateway;
 mod state;

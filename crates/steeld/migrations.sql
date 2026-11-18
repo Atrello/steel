@@ -27,13 +27,28 @@ CREATE TABLE IF NOT EXISTS guild_members (
 );
 
 CREATE TABLE IF NOT EXISTS channels (
-    id        TEXT PRIMARY KEY,
-    guild_id  TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
-    kind      INTEGER NOT NULL,
-    name      TEXT NOT NULL,
-    topic     TEXT,
-    position  INTEGER NOT NULL DEFAULT 0,
+    id         TEXT PRIMARY KEY,
+    guild_id   TEXT REFERENCES guilds(id) ON DELETE CASCADE,
+    kind       INTEGER NOT NULL,
+    name       TEXT,
+    topic      TEXT,
+    position   INTEGER NOT NULL DEFAULT 0,
+    owner_id   TEXT REFERENCES users(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS channel_recipients (
+    channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    PRIMARY KEY (channel_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS relationships (
+    user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    target_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    kind      INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, target_id)
 );
 
 CREATE TABLE IF NOT EXISTS messages (

@@ -10,7 +10,7 @@ use futures_util::StreamExt;
 use serde_json::json;
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::{api, chat, events::Dispatch, state::AppState};
+use crate::{api, chat, dm, events::Dispatch, state::AppState};
 
 pub const HEARTBEAT_INTERVAL_MS: u64 = 41_250;
 /// Close the socket if no heartbeat arrives within this window.
@@ -63,6 +63,14 @@ pub async fn run(state: AppState, mut socket: WebSocket) {
             return;
         }
     };
+    let private_channels = match dm::private_channels_for_user(&state, &user.id).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("READY: could not load DMs: {e}");
+            close(&mut socket, 4000, "Unknown error.").await;
+            return;
+        }
+    };
     let mut seq: u64 = 1;
     let ready = GatewayFrame::dispatch(
         seq,
@@ -73,7 +81,7 @@ pub async fn run(state: AppState, mut socket: WebSocket) {
             "session_id": session_id,
             "resume_gateway_url": "/gateway",
             "guilds": guilds,
-            "private_channels": [],
+            "private_channels": private_channels,
         }),
     );
     if send(&mut socket, &ready).await.is_err() {

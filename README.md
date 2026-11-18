@@ -14,15 +14,17 @@ deploy/                 Dockerfile, docker-compose.yml, example env file
 
 ## Status
 
-Phase 1 in progress. Smoke test: `scripts/smoke_test.py` against a running server. Implemented so far:
+Phase 1 in progress. Smoke tests: `scripts/smoke_test.py` and `scripts/dm_smoke_test.py` against a running server. Implemented so far:
 
 - Accounts: `POST /api/v10/auth/register`, `POST /api/v10/auth/login`, `GET /api/v10/users/@me`
 - Argon2id password hashes; opaque bearer tokens stored only as SHA-256 hashes
 - Guilds, channels, messages (send, list with pagination, edit, delete, replies), typing, invites.
+- DMs and group DMs (`POST /users/@me/channels`), reusing an existing 1:1 DM.
+- Friends and blocking: friend requests by username, accept, block, unblock, remove (`/users/@me/relationships`).
 - Gateway dispatches READY (with guilds), GUILD_CREATE, CHANNEL_CREATE, MESSAGE_CREATE/UPDATE/DELETE, TYPING_START, GUILD_MEMBER_ADD.
 - Gateway at `/gateway`: Hello (op 10), Identify (op 2) to READY, Heartbeat (op 1) to ACK (op 11). Bad tokens close with 4004.
 
-Not yet implemented: Resume, roles and permissions, DMs and group DMs, friends and blocking, uploads and CDN, presence, read state.
+Not yet implemented: Resume, roles and permissions, uploads and CDN, presence, read state.
 
 ## Run locally
 

@@ -121,6 +121,16 @@ mod tests {
 /// Channel types. Only text channels exist in this chunk.
 pub mod channel_type {
     pub const GUILD_TEXT: u8 = 0;
+    pub const DM: u8 = 1;
+    pub const GROUP_DM: u8 = 3;
+}
+
+/// Relationship kinds, as in Discord's relationship API.
+pub mod relationship_type {
+    pub const FRIEND: u8 = 1;
+    pub const BLOCKED: u8 = 2;
+    pub const INCOMING_REQUEST: u8 = 3;
+    pub const OUTGOING_REQUEST: u8 = 4;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -136,6 +146,38 @@ pub struct Channel {
     pub position: i64,
     #[serde(default)]
     pub topic: Option<String>,
+    /// Participants of a DM or group DM. Empty for guild channels.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recipients: Vec<User>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Relationship {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: u8,
+    pub user: User,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateDm {
+    #[serde(default)]
+    pub recipient_id: Option<String>,
+    #[serde(default)]
+    pub recipients: Vec<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendFriendRequest {
+    pub username: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateRelationship {
+    #[serde(rename = "type", default)]
+    pub kind: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
