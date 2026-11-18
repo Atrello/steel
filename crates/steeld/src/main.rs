@@ -8,6 +8,7 @@ mod db;
 mod dm;
 mod events;
 mod gateway;
+mod invite_page;
 mod members;
 mod perms;
 mod pins;
