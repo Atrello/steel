@@ -21,6 +21,9 @@ use crate::{
 
 pub const PUBLIC_THREAD: u8 = 11;
 const TEXT_PARENTS: [i64; 2] = [0, 5];
+/// Forum channels hold posts: threads with a starter message.
+const FORUM: i64 = 15;
+const MAX_POST_CHARS: usize = 2000;
 /// Auto-archive windows in minutes that clients may ask for.
 const ARCHIVE_WINDOWS: [u32; 4] = [60, 1440, 4320, 10080];
 const DEFAULT_ARCHIVE: u32 = 1440;
@@ -37,6 +40,10 @@ pub fn routes() -> Router<AppState> {
         .route(
             &format!("{API_PREFIX}/channels/{{channel_id}}/threads"),
             post(create_standalone),
+        )
+        .route(
+            &format!("{API_PREFIX}/channels/{{channel_id}}/threads/search"),
+            get(search_posts),
         )
         .route(
             &format!("{API_PREFIX}/guilds/{{guild_id}}/threads/active"),
@@ -109,8 +116,8 @@ async fn text_parent(
     let user = chat::authed(state, headers).await?;
     let parent = chat::channel_row(state, channel_id).await?;
     chat::require_channel(state, &parent, &user.id).await?;
-    if parent.guild_id.is_none() || !TEXT_PARENTS.contains(&parent.kind) {
-        return Err(invalid("threads can only start in a text channel"));
+    if parent.guild_id.is_none() || !(TEXT_PARENTS.contains(&parent.kind) || parent.kind == FORUM) {
+        return Err(invalid("threads can only start in a text or forum channel"));
     }
     Ok((user.id, parent))
 }
@@ -210,9 +217,110 @@ async fn create_standalone(
         }
         let name = check_name(&body.name)?;
         let archive = check_archive(body.auto_archive_duration)?;
+        if parent.kind == FORUM {
+            let content = body
+                .message
+                .as_ref()
+                .map(|m| m.content.trim_end().to_string())
+                .unwrap_or_default();
+            if content.trim().is_empty() || content.chars().count() > MAX_POST_CHARS {
+                return Err(invalid(
+                    "a forum post needs a starter message of 1-2000 characters",
+                ));
+            }
+            // A post's starter message has the same id as the post, as Discord does.
+            let id = auth::new_id();
+            let channel = insert_thread(&state, &id, &parent, &user_id, &name, archive).await?;
+            insert_starter(&state, &id, &user_id, &content).await?;
+            return Ok((StatusCode::CREATED, Json(channel)).into_response());
+        }
         let id = auth::new_id();
         let channel = insert_thread(&state, &id, &parent, &user_id, &name, archive).await?;
         Ok((StatusCode::CREATED, Json(channel)).into_response())
+    }
+    .await;
+    result.unwrap_or_else(|e| e)
+}
+
+/// Writes a forum post's starter message and announces it.
+async fn insert_starter(
+    state: &AppState,
+    post_id: &str,
+    author_id: &str,
+    content: &str,
+) -> ApiResult<()> {
+    sqlx::query(&crate::db::sql(
+        "INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES (?, ?, ?, ?, ?)",
+    ))
+    .bind(post_id)
+    .bind(post_id)
+    .bind(author_id)
+    .bind(content)
+    .bind(chat::now_iso())
+    .execute(&state.db)
+    .await
+    .map_err(db)?;
+    let mut out = vec![chat::message_json(
+        chat::message_by_id(state, post_id).await?,
+    )];
+    crate::reactions::hydrate(state, author_id, &mut out)
+        .await
+        .map_err(db)?;
+    let targets = chat::channel_audience(state, &chat::channel_row(state, post_id).await?)
+        .await
+        .map_err(db)?;
+    state.publish(
+        targets,
+        "MESSAGE_CREATE",
+        serde_json::to_value(&out[0]).unwrap_or_default(),
+    );
+    Ok(())
+}
+
+#[derive(serde::Deserialize)]
+struct SearchQuery {
+    #[serde(default)]
+    limit: Option<i64>,
+    #[serde(default)]
+    offset: Option<i64>,
+}
+
+/// `GET /channels/{forum}/threads/search`: open posts, newest first, each with its starter message.
+async fn search_posts(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(channel_id): Path<String>,
+    axum::extract::Query(query): axum::extract::Query<SearchQuery>,
+) -> Response {
+    let result: ApiResult<Response> = async {
+        let user = chat::authed(&state, &headers).await?;
+        let parent = chat::channel_row(&state, &channel_id).await?;
+        chat::require_channel(&state, &parent, &user.id).await?;
+        if parent.kind != FORUM {
+            return Err(invalid("posts can only be searched in a forum channel"));
+        }
+        let limit = query.limit.unwrap_or(25).clamp(1, 25);
+        let offset = query.offset.unwrap_or(0).max(0);
+        let rows: Vec<ChannelRow> = sqlx::query_as(&crate::db::sql(&format!(
+            "{THREAD_ROWS} WHERE c.parent_id = ? AND t.archived = 0 ORDER BY c.created_at DESC, c.id DESC LIMIT ? OFFSET ?"
+        )))
+        .bind(&channel_id)
+        .bind(limit + 1)
+        .bind(offset)
+        .fetch_all(&state.db)
+        .await
+        .map_err(db)?;
+        let has_more = rows.len() as i64 > limit;
+        let mut threads = Vec::new();
+        let mut first_messages = Vec::new();
+        for row in rows.into_iter().take(limit as usize) {
+            let post_id = row.id.clone();
+            threads.push(chat::channel_json(&state, row).await?);
+            if let Ok(message) = chat::message_by_id(&state, &post_id).await {
+                first_messages.push(chat::message_json(message));
+            }
+        }
+        Ok(Json(json!({ "threads": threads, "has_more": has_more, "first_messages": first_messages })).into_response())
     }
     .await;
     result.unwrap_or_else(|e| e)
