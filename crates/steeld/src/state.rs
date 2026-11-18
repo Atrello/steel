@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use tokio::sync::broadcast;
 
-use crate::{db::Db, events::Dispatch, presence::PresenceTracker, session::SessionStore};
+use crate::{db::Db, events::Dispatch, presence::PresenceTracker, session::SessionStore, voice};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -10,6 +10,7 @@ pub struct AppState {
     pub events: broadcast::Sender<Dispatch>,
     pub presence: Arc<PresenceTracker>,
     pub sessions: Arc<SessionStore>,
+    pub voice: Arc<voice::Registry>,
 }
 
 impl AppState {
@@ -20,6 +21,7 @@ impl AppState {
             events,
             presence: Arc::new(PresenceTracker::default()),
             sessions: Arc::new(SessionStore::default()),
+            voice: Arc::new(voice::Registry::new(voice::Config::from_env())),
         }
     }
 
