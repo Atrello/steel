@@ -89,7 +89,7 @@ pub async fn create(
         .bind(message_id)
         .bind(poll.question.text.trim())
         .bind(expires_at)
-        .bind(poll.allow_multiselect)
+        .bind(i64::from(poll.allow_multiselect))
         .execute(&state.db)
         .await?;
     for (index, answer) in poll.answers.iter().enumerate() {

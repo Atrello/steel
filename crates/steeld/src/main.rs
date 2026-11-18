@@ -3,6 +3,7 @@ mod api;
 mod audit;
 mod auth;
 mod bots;
+mod calls;
 mod channels;
 mod chat;
 mod db;
@@ -25,6 +26,7 @@ mod search;
 mod session;
 mod settings;
 mod state;
+mod stickers;
 mod threads;
 mod uploads;
 

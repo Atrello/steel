@@ -39,10 +39,12 @@ pub fn router(state: AppState) -> Router {
         .merge(settings::routes())
         .merge(audit::routes())
         .merge(crate::onboarding::routes())
+        .merge(crate::stickers::routes())
         .merge(search::routes())
         .merge(crate::profile::routes())
         .merge(crate::roles::routes())
         .merge(bots::routes())
+        .merge(crate::calls::routes())
         .merge(crate::invite_page::routes())
         .layer(axum::extract::DefaultBodyLimit::max(
             uploads::max_file_bytes() as usize * uploads::MAX_FILES + 1024 * 1024,
@@ -145,7 +147,7 @@ async fn register(State(state): State<AppState>, Json(req): Json<RegisterRequest
 
 async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>) -> Response {
     let row: Option<(String, String, String)> = match sqlx::query_as(&crate::db::sql(
-        "SELECT id, username, password_hash FROM users WHERE username = ? OR email = ?",
+        "SELECT id, username, password_hash FROM users WHERE lower(username) = lower(?) OR lower(email) = lower(?)",
     ))
     .bind(&req.login)
     .bind(&req.login)

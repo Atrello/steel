@@ -48,28 +48,26 @@ pub fn sql(text: &str) -> Cow<'_, str> {
 /// Open the database at `url` and bring its schema up to date.
 ///
 /// `sqlite://...` opens a SQLite file (foreign keys and WAL are enabled on every connection).
-/// `postgres://...` connects to Postgres. Versioned migrations are embedded in the binary; each
-/// one runs once and is recorded in `_sqlx_migrations`. Version numbers are reserved per branch
+/// `postgres://...` connects to Postgres, which uses the `migrations-pg` set. Migrations are embedded
+/// in the binary; each one runs once and is recorded in `_sqlx_migrations`. Version numbers are reserved per branch
 /// (see the README), so gaps and late-merged lower versions are expected.
 pub async fn connect(url: &str) -> Result<Db, sqlx::Error> {
     install_default_drivers();
     let postgres = url.starts_with("postgres://") || url.starts_with("postgresql://");
     let _ = POSTGRES.set(postgres);
-    if postgres {
-        return Err(sqlx::Error::Protocol(
-            "Postgres support is not available in this build yet".into(),
-        ));
-    }
     let pool = AnyPoolOptions::new()
         .max_connections(8)
-        .after_connect(|conn, _meta| {
+        .after_connect(move |conn, _meta| {
             Box::pin(async move {
-                sqlx::query(&crate::db::sql("PRAGMA foreign_keys = ON"))
-                    .execute(&mut *conn)
-                    .await?;
-                sqlx::query(&crate::db::sql("PRAGMA journal_mode = WAL"))
-                    .execute(&mut *conn)
-                    .await?;
+                // SQLite settings are per connection, so they run on every connection.
+                if !postgres {
+                    sqlx::query("PRAGMA foreign_keys = ON")
+                        .execute(&mut *conn)
+                        .await?;
+                    sqlx::query("PRAGMA journal_mode = WAL")
+                        .execute(&mut *conn)
+                        .await?;
+                }
                 Ok(())
             })
         })
@@ -78,11 +76,15 @@ pub async fn connect(url: &str) -> Result<Db, sqlx::Error> {
     // Migrations from other branches may already be applied to this database but missing from
     // this binary, for example when a branch with a different migration number has merged first.
     // Versions need not be contiguous, and a lower version added later still runs once.
-    let mut migrator = sqlx::migrate!("./migrations");
-    migrator.set_ignore_missing(true);
-    migrator
-        .run(&pool)
-        .await
-        .map_err(|e| sqlx::Error::Protocol(format!("migration failed: {e}")))?;
+    let run = if postgres {
+        let mut migrator = sqlx::migrate!("./migrations-pg");
+        migrator.set_ignore_missing(true);
+        migrator.run(&pool).await
+    } else {
+        let mut migrator = sqlx::migrate!("./migrations");
+        migrator.set_ignore_missing(true);
+        migrator.run(&pool).await
+    };
+    run.map_err(|e| sqlx::Error::Protocol(format!("migration failed: {e}")))?;
     Ok(pool)
 }

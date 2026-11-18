@@ -99,7 +99,11 @@ async fn dm_channel(
     })
 }
 
-async fn is_blocked_either_way(state: &AppState, a: &str, b: &str) -> Result<bool, sqlx::Error> {
+pub async fn is_blocked_either_way(
+    state: &AppState,
+    a: &str,
+    b: &str,
+) -> Result<bool, sqlx::Error> {
     let found: Option<(i64,)> = sqlx::query_as(
         &crate::db::sql("SELECT 1 FROM relationships WHERE kind = ? AND ((user_id = ? AND target_id = ?) OR (user_id = ? AND target_id = ?))"),
     )
@@ -314,7 +318,7 @@ async fn send_friend_request(
     let result: ApiResult<Response> = async {
         let me = authed(&state, &headers).await?;
         let target: Option<(String, String)> = sqlx::query_as(&crate::db::sql(
-            "SELECT id, username FROM users WHERE username = ?",
+            "SELECT id, username FROM users WHERE lower(username) = lower(?)",
         ))
         .bind(req.username.trim())
         .fetch_optional(&state.db)

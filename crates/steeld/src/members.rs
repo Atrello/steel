@@ -63,7 +63,7 @@ async fn advance_read(
     sqlx::query(
         &crate::db::sql("INSERT INTO read_states (user_id, channel_id, last_message_id) VALUES (?, ?, ?) \
          ON CONFLICT(user_id, channel_id) DO UPDATE SET last_message_id = excluded.last_message_id \
-         WHERE CAST(excluded.last_message_id AS BIGINT) > CAST(COALESCE(read_states.last_message_id, '0') AS INTEGER)"),
+         WHERE CAST(excluded.last_message_id AS BIGINT) > CAST(COALESCE(read_states.last_message_id, '0') AS BIGINT)"),
     )
     .bind(user_id)
     .bind(channel_id)
@@ -473,7 +473,7 @@ async fn ban_member(
         )
         .await?;
         sqlx::query(&crate::db::sql(
-            "INSERT OR REPLACE INTO guild_bans (guild_id, user_id, created_at) VALUES (?, ?, ?)",
+            "INSERT INTO guild_bans (guild_id, user_id, created_at) VALUES (?, ?, ?) ON CONFLICT (guild_id, user_id) DO UPDATE SET created_at = excluded.created_at",
         ))
         .bind(&guild_id)
         .bind(&user_id)
