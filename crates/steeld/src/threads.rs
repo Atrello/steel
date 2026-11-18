@@ -69,14 +69,14 @@ pub async fn metadata(
     state: &AppState,
     channel_id: &str,
 ) -> Result<Option<ThreadMetadata>, sqlx::Error> {
-    let row: Option<(bool, i64, String)> = sqlx::query_as(
+    let row: Option<(i64, i64, String)> = sqlx::query_as(&crate::db::sql(
         "SELECT archived, auto_archive_minutes, archive_timestamp FROM threads WHERE channel_id = ?",
-    )
+    ))
     .bind(channel_id)
     .fetch_optional(&state.db)
     .await?;
     Ok(row.map(|(archived, minutes, at)| ThreadMetadata {
-        archived,
+        archived: archived != 0,
         auto_archive_duration: minutes as u32,
         archive_timestamp: at,
     }))
@@ -126,9 +126,9 @@ async fn insert_thread(
 ) -> ApiResult<Channel> {
     let guild_id = parent.guild_id.clone().unwrap_or_default();
     let now = chat::now_iso();
-    sqlx::query(
+    sqlx::query(&crate::db::sql(
         "INSERT INTO channels (id, guild_id, kind, name, topic, position, parent_id, created_at) VALUES (?, ?, ?, ?, NULL, 0, ?, ?)",
-    )
+    ))
     .bind(id)
     .bind(&guild_id)
     .bind(i64::from(PUBLIC_THREAD))
@@ -138,9 +138,9 @@ async fn insert_thread(
     .execute(&state.db)
     .await
     .map_err(db)?;
-    sqlx::query(
+    sqlx::query(&crate::db::sql(
         "INSERT INTO threads (channel_id, owner_id, archived, auto_archive_minutes, archive_timestamp, created_at) VALUES (?, ?, 0, ?, ?, ?)",
-    )
+    ))
     .bind(id)
     .bind(owner_id)
     .bind(i64::from(archive_minutes))
@@ -176,11 +176,12 @@ async fn create_from_message(
         if message.channel_id != channel_id {
             return Err(chat::missing_message());
         }
-        let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM channels WHERE id = ?")
-            .bind(&message_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(db)?;
+        let exists: Option<(i64,)> =
+            sqlx::query_as(&crate::db::sql("SELECT 1 FROM channels WHERE id = ?"))
+                .bind(&message_id)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(db)?;
         if exists.is_some() {
             return Err(api_error(
                 StatusCode::BAD_REQUEST,
@@ -236,9 +237,9 @@ async fn active(
     let result: ApiResult<Response> = async {
         let user = chat::authed(&state, &headers).await?;
         chat::require_member(&state, &guild_id, &user.id).await?;
-        let rows: Vec<ChannelRow> = sqlx::query_as(&format!(
-            "{THREAD_ROWS} WHERE c.guild_id = ? AND t.archived = 0 ORDER BY CAST(c.id AS INTEGER)"
-        ))
+        let rows: Vec<ChannelRow> = sqlx::query_as(&crate::db::sql(&format!(
+            "{THREAD_ROWS} WHERE c.guild_id = ? AND t.archived = 0 ORDER BY c.created_at, c.id"
+        )))
         .bind(&guild_id)
         .fetch_all(&state.db)
         .await
@@ -259,9 +260,9 @@ async fn archived_public(
         let user = chat::authed(&state, &headers).await?;
         let parent = chat::channel_row(&state, &channel_id).await?;
         chat::require_channel(&state, &parent, &user.id).await?;
-        let rows: Vec<ChannelRow> = sqlx::query_as(&format!(
-            "{THREAD_ROWS} WHERE c.parent_id = ? AND t.archived = 1 ORDER BY CAST(c.id AS INTEGER)"
-        ))
+        let rows: Vec<ChannelRow> = sqlx::query_as(&crate::db::sql(&format!(
+            "{THREAD_ROWS} WHERE c.parent_id = ? AND t.archived = 1 ORDER BY c.created_at, c.id"
+        )))
         .bind(&channel_id)
         .fetch_all(&state.db)
         .await

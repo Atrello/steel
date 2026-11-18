@@ -61,9 +61,9 @@ async fn advance_read(
     message_id: &str,
 ) -> Result<(), sqlx::Error> {
     sqlx::query(
-        "INSERT INTO read_states (user_id, channel_id, last_message_id) VALUES (?, ?, ?) \
+        &crate::db::sql("INSERT INTO read_states (user_id, channel_id, last_message_id) VALUES (?, ?, ?) \
          ON CONFLICT(user_id, channel_id) DO UPDATE SET last_message_id = excluded.last_message_id \
-         WHERE CAST(excluded.last_message_id AS INTEGER) > CAST(COALESCE(read_states.last_message_id, '0') AS INTEGER)",
+         WHERE CAST(excluded.last_message_id AS BIGINT) > CAST(COALESCE(read_states.last_message_id, '0') AS INTEGER)"),
     )
     .bind(user_id)
     .bind(channel_id)
@@ -82,14 +82,14 @@ async fn ack_guild(
     let result: ApiResult<Response> = async {
         let user = chat::authed(&state, &headers).await?;
         chat::require_member(&state, &guild_id, &user.id).await?;
-        let channels: Vec<(String,)> = sqlx::query_as("SELECT id FROM channels WHERE guild_id = ?")
+        let channels: Vec<(String,)> = sqlx::query_as(&crate::db::sql("SELECT id FROM channels WHERE guild_id = ?"))
             .bind(&guild_id)
             .fetch_all(&state.db)
             .await
             .map_err(db)?;
         for (channel_id,) in channels {
             let newest: Option<(String,)> = sqlx::query_as(
-                "SELECT id FROM messages WHERE channel_id = ? ORDER BY CAST(id AS INTEGER) DESC LIMIT 1",
+                &crate::db::sql("SELECT id FROM messages WHERE channel_id = ? ORDER BY CAST(id AS BIGINT) DESC LIMIT 1"),
             )
             .bind(&channel_id)
             .fetch_optional(&state.db)
@@ -179,14 +179,15 @@ async fn leave_dm(
                 "only DMs can be left",
             ));
         }
-        let removed =
-            sqlx::query("DELETE FROM channel_recipients WHERE channel_id = ? AND user_id = ?")
-                .bind(&channel_id)
-                .bind(&user.id)
-                .execute(&state.db)
-                .await
-                .map_err(db)?
-                .rows_affected();
+        let removed = sqlx::query(&crate::db::sql(
+            "DELETE FROM channel_recipients WHERE channel_id = ? AND user_id = ?",
+        ))
+        .bind(&channel_id)
+        .bind(&user.id)
+        .execute(&state.db)
+        .await
+        .map_err(db)?
+        .rows_affected();
         if removed == 0 {
             return Err(chat::missing_channel());
         }
@@ -199,7 +200,7 @@ async fn leave_dm(
 
         let remaining = chat::channel_audience(&state, &channel).await.map_err(db)?;
         if remaining.is_empty() {
-            sqlx::query("DELETE FROM channels WHERE id = ?")
+            sqlx::query(&crate::db::sql("DELETE FROM channels WHERE id = ?"))
                 .bind(&channel_id)
                 .execute(&state.db)
                 .await
@@ -234,12 +235,14 @@ async fn leave_guild(
                 "the owner cannot leave their own guild",
             ));
         }
-        sqlx::query("DELETE FROM guild_members WHERE guild_id = ? AND user_id = ?")
-            .bind(&guild_id)
-            .bind(&user.id)
-            .execute(&state.db)
-            .await
-            .map_err(db)?;
+        sqlx::query(&crate::db::sql(
+            "DELETE FROM guild_members WHERE guild_id = ? AND user_id = ?",
+        ))
+        .bind(&guild_id)
+        .bind(&user.id)
+        .execute(&state.db)
+        .await
+        .map_err(db)?;
         state.publish(
             vec![user.id.clone()],
             "GUILD_DELETE",
@@ -272,8 +275,8 @@ fn member_json(id: &str, username: &str, nick: Option<String>, joined_at: &str) 
 
 async fn member_row(state: &AppState, guild_id: &str, user_id: &str) -> ApiResult<Value> {
     let row: Option<(String, String, String, Option<String>)> = sqlx::query_as(
-        "SELECT u.id, u.username, m.joined_at, m.nick FROM guild_members m JOIN users u ON u.id = m.user_id \
-         WHERE m.guild_id = ? AND m.user_id = ?",
+        &crate::db::sql("SELECT u.id, u.username, m.joined_at, m.nick FROM guild_members m JOIN users u ON u.id = m.user_id \
+         WHERE m.guild_id = ? AND m.user_id = ?"),
     )
     .bind(guild_id)
     .bind(user_id)
@@ -338,7 +341,7 @@ async fn edit_member(
             }
             Some(_) => return Err(api_error(StatusCode::BAD_REQUEST, 50035, "nick must be a string or null")),
         };
-        let updated = sqlx::query("UPDATE guild_members SET nick = ? WHERE guild_id = ? AND user_id = ?")
+        let updated = sqlx::query(&crate::db::sql("UPDATE guild_members SET nick = ? WHERE guild_id = ? AND user_id = ?"))
             .bind(&nick)
             .bind(&guild_id)
             .bind(&user_id)
@@ -364,12 +367,14 @@ async fn edit_member(
 
 /// Remove a member's membership and tell everyone. Returns the removed user's ID.
 async fn remove_membership(state: &AppState, guild_id: &str, user_id: &str) -> ApiResult<()> {
-    sqlx::query("DELETE FROM guild_members WHERE guild_id = ? AND user_id = ?")
-        .bind(guild_id)
-        .bind(user_id)
-        .execute(&state.db)
-        .await
-        .map_err(db)?;
+    sqlx::query(&crate::db::sql(
+        "DELETE FROM guild_members WHERE guild_id = ? AND user_id = ?",
+    ))
+    .bind(guild_id)
+    .bind(user_id)
+    .execute(&state.db)
+    .await
+    .map_err(db)?;
     state.publish(
         vec![user_id.to_string()],
         "GUILD_DELETE",
@@ -421,13 +426,14 @@ async fn kick_member(
             crate::perms::KICK_MEMBERS,
         )
         .await?;
-        let found: Option<(i64,)> =
-            sqlx::query_as("SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?")
-                .bind(&guild_id)
-                .bind(&user_id)
-                .fetch_optional(&state.db)
-                .await
-                .map_err(db)?;
+        let found: Option<(i64,)> = sqlx::query_as(&crate::db::sql(
+            "SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?",
+        ))
+        .bind(&guild_id)
+        .bind(&user_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(db)?;
         if found.is_none() {
             return Err(chat::missing_member());
         }
@@ -453,22 +459,23 @@ async fn ban_member(
             crate::perms::BAN_MEMBERS,
         )
         .await?;
-        sqlx::query(
+        sqlx::query(&crate::db::sql(
             "INSERT OR REPLACE INTO guild_bans (guild_id, user_id, created_at) VALUES (?, ?, ?)",
-        )
+        ))
         .bind(&guild_id)
         .bind(&user_id)
         .bind(chrono::Utc::now().to_rfc3339())
         .execute(&state.db)
         .await
         .map_err(db)?;
-        let was_member: Option<(i64,)> =
-            sqlx::query_as("SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?")
-                .bind(&guild_id)
-                .bind(&user_id)
-                .fetch_optional(&state.db)
-                .await
-                .map_err(db)?;
+        let was_member: Option<(i64,)> = sqlx::query_as(&crate::db::sql(
+            "SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?",
+        ))
+        .bind(&guild_id)
+        .bind(&user_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(db)?;
         if was_member.is_some() {
             remove_membership(&state, &guild_id, &user_id).await?;
         }
@@ -493,12 +500,14 @@ async fn unban_member(
     let result: ApiResult<Response> = async {
         let me = chat::authed(&state, &headers).await?;
         crate::perms::require_guild(&state, &guild_id, &me.id, crate::perms::BAN_MEMBERS).await?;
-        sqlx::query("DELETE FROM guild_bans WHERE guild_id = ? AND user_id = ?")
-            .bind(&guild_id)
-            .bind(&user_id)
-            .execute(&state.db)
-            .await
-            .map_err(db)?;
+        sqlx::query(&crate::db::sql(
+            "DELETE FROM guild_bans WHERE guild_id = ? AND user_id = ?",
+        ))
+        .bind(&guild_id)
+        .bind(&user_id)
+        .execute(&state.db)
+        .await
+        .map_err(db)?;
         let remaining = chat::member_ids(&state, &guild_id).await.map_err(db)?;
         state.publish(
             remaining,

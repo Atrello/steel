@@ -82,13 +82,14 @@ async fn message_in_channel(
     let user = chat::authed(state, headers).await?;
     let channel = chat::channel_row(state, channel_id).await?;
     chat::require_channel(state, &channel, &user.id).await?;
-    let exists: Option<(i64,)> =
-        sqlx::query_as("SELECT 1 FROM messages WHERE id = ? AND channel_id = ?")
-            .bind(message_id)
-            .bind(channel_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(db)?;
+    let exists: Option<(i64,)> = sqlx::query_as(&crate::db::sql(
+        "SELECT 1 FROM messages WHERE id = ? AND channel_id = ?",
+    ))
+    .bind(message_id)
+    .bind(channel_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(db)?;
     if exists.is_none() {
         return Err(chat::missing_message());
     }
@@ -114,12 +115,12 @@ async fn add_own(
     let result: ApiResult<Response> = async {
         let key = emoji_key(&emoji)?;
         let (user_id, channel) = message_in_channel(&state, &headers, &channel_id, &message_id).await?;
-        let distinct: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT emoji) FROM reactions WHERE message_id = ?")
+        let distinct: i64 = sqlx::query_scalar(&crate::db::sql("SELECT COUNT(DISTINCT emoji) FROM reactions WHERE message_id = ?"))
             .bind(&message_id)
             .fetch_one(&state.db)
             .await
             .map_err(db)?;
-        let already: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM reactions WHERE message_id = ? AND emoji = ?")
+        let already: Option<(i64,)> = sqlx::query_as(&crate::db::sql("SELECT 1 FROM reactions WHERE message_id = ? AND emoji = ?"))
             .bind(&message_id)
             .bind(&key)
             .fetch_optional(&state.db)
@@ -128,7 +129,7 @@ async fn add_own(
         if already.is_none() && distinct >= MAX_REACTIONS_PER_MESSAGE {
             return Err(api_error(StatusCode::BAD_REQUEST, 90001, "too many different reactions on this message"));
         }
-        sqlx::query("INSERT OR IGNORE INTO reactions (message_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?)")
+        sqlx::query(&crate::db::sql("INSERT OR IGNORE INTO reactions (message_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?)"))
             .bind(&message_id)
             .bind(&user_id)
             .bind(&key)
@@ -157,13 +158,15 @@ async fn remove_own(
         let key = emoji_key(&emoji)?;
         let (user_id, channel) =
             message_in_channel(&state, &headers, &channel_id, &message_id).await?;
-        sqlx::query("DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ?")
-            .bind(&message_id)
-            .bind(&user_id)
-            .bind(&key)
-            .execute(&state.db)
-            .await
-            .map_err(db)?;
+        sqlx::query(&crate::db::sql(
+            "DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
+        ))
+        .bind(&message_id)
+        .bind(&user_id)
+        .bind(&key)
+        .execute(&state.db)
+        .await
+        .map_err(db)?;
         publish_to_channel(
             &state,
             &channel,
@@ -204,13 +207,15 @@ async fn remove_user(
                 "Missing Permissions",
             ));
         }
-        sqlx::query("DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ?")
-            .bind(&message_id)
-            .bind(&target)
-            .bind(&key)
-            .execute(&state.db)
-            .await
-            .map_err(db)?;
+        sqlx::query(&crate::db::sql(
+            "DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji = ?",
+        ))
+        .bind(&message_id)
+        .bind(&target)
+        .bind(&key)
+        .execute(&state.db)
+        .await
+        .map_err(db)?;
         publish_to_channel(
             &state,
             &channel,
@@ -252,11 +257,13 @@ async fn clear_all(
                     "Missing Permissions",
                 ));
             }
-            sqlx::query("DELETE FROM reactions WHERE message_id = ?")
-                .bind(&message_id)
-                .execute(&state.db)
-                .await
-                .map_err(db)?;
+            sqlx::query(&crate::db::sql(
+                "DELETE FROM reactions WHERE message_id = ?",
+            ))
+            .bind(&message_id)
+            .execute(&state.db)
+            .await
+            .map_err(db)?;
             publish_to_channel(&state, &channel, "MESSAGE_REACTION_REMOVE_ALL", json!({
             "channel_id": channel_id, "message_id": message_id, "guild_id": channel.guild_id,
         }))
@@ -283,13 +290,13 @@ async fn list_users(
         let key = emoji_key(&emoji)?;
         message_in_channel(&state, &headers, &channel_id, &message_id).await?;
         let limit = q.limit.unwrap_or(25).clamp(1, 100);
-        let rows: Vec<(String, String)> = sqlx::query_as(
+        let rows: Vec<(String, String)> = sqlx::query_as(&crate::db::sql(
             "SELECT u.id, u.username FROM reactions r JOIN users u ON u.id = r.user_id \
-             WHERE r.message_id = ? AND r.emoji = ? ORDER BY r.rowid LIMIT ?",
-        )
+             WHERE r.message_id = ? AND r.emoji = ? ORDER BY r.created_at, r.user_id LIMIT ?",
+        ))
         .bind(&message_id)
         .bind(&key)
-        .bind(limit)
+        .bind(i64::from(limit))
         .fetch_all(&state.db)
         .await
         .map_err(db)?;
@@ -313,10 +320,10 @@ pub async fn hydrate(
         return Ok(());
     }
     let placeholders = vec!["?"; messages.len()].join(",");
-    let sql = format!(
+    let sql = crate::db::sql(&format!(
         "SELECT message_id, emoji, COUNT(*), MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) FROM reactions \
-         WHERE message_id IN ({placeholders}) GROUP BY message_id, emoji ORDER BY MIN(rowid)"
-    );
+         WHERE message_id IN ({placeholders}) GROUP BY message_id, emoji ORDER BY MIN(created_at)"
+    )).into_owned();
     let mut q = sqlx::query_as::<_, (String, String, i64, i64)>(&sql).bind(me);
     for m in messages.iter() {
         q = q.bind(m.id.clone());

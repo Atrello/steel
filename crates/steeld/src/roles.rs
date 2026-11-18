@@ -80,10 +80,10 @@ pub async fn roles_for_guild_db(
     state: &AppState,
     guild_id: &str,
 ) -> Result<Vec<Value>, sqlx::Error> {
-    let rows: Vec<RoleRow> = sqlx::query_as(
+    let rows: Vec<RoleRow> = sqlx::query_as(&crate::db::sql(
         "SELECT id, name, permissions, color, hoist, mentionable, position FROM roles \
-         WHERE guild_id = ? ORDER BY position, CAST(id AS INTEGER)",
-    )
+         WHERE guild_id = ? ORDER BY position, CAST(id AS BIGINT)",
+    ))
     .bind(guild_id)
     .fetch_all(&state.db)
     .await?;
@@ -91,10 +91,10 @@ pub async fn roles_for_guild_db(
 }
 
 async fn role_row(state: &AppState, guild_id: &str, role_id: &str) -> ApiResult<RoleRow> {
-    sqlx::query_as(
+    sqlx::query_as(&crate::db::sql(
         "SELECT id, name, permissions, color, hoist, mentionable, position FROM roles \
          WHERE id = ? AND guild_id = ?",
-    )
+    ))
     .bind(role_id)
     .bind(guild_id)
     .fetch_optional(&state.db)
@@ -197,7 +197,7 @@ async fn create_role(
         let color = parse_color(fields)?.unwrap_or(0);
         let hoist = fields.get("hoist").and_then(Value::as_bool).unwrap_or(false);
         let mentionable = fields.get("mentionable").and_then(Value::as_bool).unwrap_or(false);
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM roles WHERE guild_id = ?")
+        let count: i64 = sqlx::query_scalar(&crate::db::sql("SELECT COUNT(*) FROM roles WHERE guild_id = ?"))
             .bind(&guild_id)
             .fetch_one(&state.db)
             .await
@@ -205,7 +205,7 @@ async fn create_role(
         if count >= MAX_ROLES {
             return Err(bad("too many roles in this guild"));
         }
-        let position: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(position), 0) + 1 FROM roles WHERE guild_id = ?")
+        let position: i64 = sqlx::query_scalar(&crate::db::sql("SELECT COALESCE(MAX(position), 0) + 1 FROM roles WHERE guild_id = ?"))
             .bind(&guild_id)
             .fetch_one(&state.db)
             .await
@@ -216,7 +216,7 @@ async fn create_role(
             1
         };
         let role_id = auth::new_id();
-        sqlx::query("INSERT INTO roles (id, guild_id, name, permissions, color, hoist, mentionable, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query(&crate::db::sql("INSERT INTO roles (id, guild_id, name, permissions, color, hoist, mentionable, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"))
             .bind(&role_id)
             .bind(&guild_id)
             .bind(&name)
@@ -272,7 +272,7 @@ async fn edit_role(
             .get("mentionable")
             .and_then(Value::as_bool)
             .map_or(current.mentionable != 0, |v| v);
-        sqlx::query("UPDATE roles SET name = ?, permissions = ?, color = ?, hoist = ?, mentionable = ? WHERE id = ?")
+        sqlx::query(&crate::db::sql("UPDATE roles SET name = ?, permissions = ?, color = ?, hoist = ?, mentionable = ? WHERE id = ?"))
             .bind(&name)
             .bind(&permissions)
             .bind(color)
@@ -305,18 +305,22 @@ async fn delete_role(
         crate::perms::require_above_role(&state, &guild_id, &user.id, &role_id).await?;
         let targets = guild_members(&state, &guild_id).await?;
         let mut tx = state.db.begin().await.map_err(chat::db)?;
-        sqlx::query("DELETE FROM overwrites WHERE target_id = ? AND target_type = ?")
-            .bind(&role_id)
-            .bind(perms::TARGET_ROLE as i64)
-            .execute(&mut *tx)
-            .await
-            .map_err(chat::db)?;
-        sqlx::query("DELETE FROM roles WHERE id = ? AND guild_id = ?")
-            .bind(&role_id)
-            .bind(&guild_id)
-            .execute(&mut *tx)
-            .await
-            .map_err(chat::db)?;
+        sqlx::query(&crate::db::sql(
+            "DELETE FROM overwrites WHERE target_id = ? AND target_type = ?",
+        ))
+        .bind(&role_id)
+        .bind(perms::TARGET_ROLE as i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(chat::db)?;
+        sqlx::query(&crate::db::sql(
+            "DELETE FROM roles WHERE id = ? AND guild_id = ?",
+        ))
+        .bind(&role_id)
+        .bind(&guild_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(chat::db)?;
         tx.commit().await.map_err(chat::db)?;
         state.publish(
             targets,
@@ -357,13 +361,15 @@ async fn reorder_roles(
             if top != i64::MAX && position >= top {
                 return Err(crate::perms::missing());
             }
-            sqlx::query("UPDATE roles SET position = ? WHERE id = ? AND guild_id = ?")
-                .bind(position.max(1))
-                .bind(id)
-                .bind(&guild_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(chat::db)?;
+            sqlx::query(&crate::db::sql(
+                "UPDATE roles SET position = ? WHERE id = ? AND guild_id = ?",
+            ))
+            .bind(position.max(1))
+            .bind(id)
+            .bind(&guild_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(chat::db)?;
         }
         tx.commit().await.map_err(chat::db)?;
         let roles = roles_for_guild(&state, &guild_id).await?;
@@ -389,20 +395,21 @@ async fn member_counts(
     let result: ApiResult<Response> = async {
         let user = chat::authed(&state, &headers).await?;
         chat::require_member(&state, &guild_id, &user.id).await?;
-        let rows: Vec<(String, i64)> = sqlx::query_as(
+        let rows: Vec<(String, i64)> = sqlx::query_as(&crate::db::sql(
             "SELECT role_id, COUNT(*) FROM member_roles WHERE guild_id = ? GROUP BY role_id",
-        )
+        ))
         .bind(&guild_id)
         .fetch_all(&state.db)
         .await
         .map_err(chat::db)?;
         let mut counts = serde_json::Map::new();
-        let members: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM guild_members WHERE guild_id = ?")
-                .bind(&guild_id)
-                .fetch_one(&state.db)
-                .await
-                .map_err(chat::db)?;
+        let members: i64 = sqlx::query_scalar(&crate::db::sql(
+            "SELECT COUNT(*) FROM guild_members WHERE guild_id = ?",
+        ))
+        .bind(&guild_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(chat::db)?;
         counts.insert(guild_id.clone(), json!(members));
         for (role, count) in rows {
             counts.insert(role, json!(count));
@@ -419,19 +426,21 @@ pub async fn publish_member_roles(
     guild_id: &str,
     user_id: &str,
 ) -> ApiResult<()> {
-    let (username,): (String,) = sqlx::query_as("SELECT username FROM users WHERE id = ?")
-        .bind(user_id)
-        .fetch_one(&state.db)
-        .await
-        .map_err(chat::db)?;
-    let nick: Option<String> =
-        sqlx::query_scalar("SELECT nick FROM guild_members WHERE guild_id = ? AND user_id = ?")
-            .bind(guild_id)
+    let (username,): (String,) =
+        sqlx::query_as(&crate::db::sql("SELECT username FROM users WHERE id = ?"))
             .bind(user_id)
-            .fetch_optional(&state.db)
+            .fetch_one(&state.db)
             .await
-            .map_err(chat::db)?
-            .flatten();
+            .map_err(chat::db)?;
+    let nick: Option<String> = sqlx::query_scalar(&crate::db::sql(
+        "SELECT nick FROM guild_members WHERE guild_id = ? AND user_id = ?",
+    ))
+    .bind(guild_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(chat::db)?
+    .flatten();
     let roles = member_role_ids(state, guild_id, user_id).await?;
     let targets = guild_members(state, guild_id).await?;
     state.publish(
@@ -454,7 +463,7 @@ pub async fn member_role_ids(
     user_id: &str,
 ) -> ApiResult<Vec<String>> {
     let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT role_id FROM member_roles WHERE guild_id = ? AND user_id = ? ORDER BY CAST(role_id AS INTEGER)",
+        &crate::db::sql("SELECT role_id FROM member_roles WHERE guild_id = ? AND user_id = ? ORDER BY CAST(role_id AS BIGINT)"),
     )
     .bind(guild_id)
     .bind(user_id)
@@ -499,9 +508,9 @@ async fn change_member_role(
         chat::require_member(&state, &guild_id, &user_id).await?;
         crate::perms::require_above_member(&state, &guild_id, &user.id, &user_id).await?;
         if assign {
-            sqlx::query(
+            sqlx::query(&crate::db::sql(
                 "INSERT OR IGNORE INTO member_roles (guild_id, user_id, role_id) VALUES (?, ?, ?)",
-            )
+            ))
             .bind(&guild_id)
             .bind(&user_id)
             .bind(&role_id)
@@ -509,9 +518,9 @@ async fn change_member_role(
             .await
             .map_err(chat::db)?;
         } else {
-            sqlx::query(
+            sqlx::query(&crate::db::sql(
                 "DELETE FROM member_roles WHERE guild_id = ? AND user_id = ? AND role_id = ?",
-            )
+            ))
             .bind(&guild_id)
             .bind(&user_id)
             .bind(&role_id)

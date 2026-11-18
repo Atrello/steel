@@ -95,33 +95,37 @@ async fn load_members(
     state: &AppState,
     guild_id: &str,
 ) -> Result<Vec<(String, String, String, Option<String>)>, sqlx::Error> {
-    sqlx::query_as(
+    sqlx::query_as(&crate::db::sql(
         "SELECT u.id, u.username, m.joined_at, m.nick FROM guild_members m JOIN users u ON u.id = m.user_id \
          WHERE m.guild_id = ? ORDER BY LOWER(u.username), u.id",
-    )
+    ))
     .bind(guild_id)
     .fetch_all(&state.db)
     .await
 }
 
 async fn is_member(state: &AppState, guild_id: &str, user_id: &str) -> bool {
-    sqlx::query_scalar::<_, i64>("SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?")
-        .bind(guild_id)
-        .bind(user_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
+    sqlx::query_scalar::<_, i64>(&crate::db::sql(
+        "SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?",
+    ))
+    .bind(guild_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .is_some()
 }
 
 async fn in_guild(state: &AppState, channel_id: &str, guild_id: &str) -> bool {
-    sqlx::query_scalar::<_, i64>("SELECT 1 FROM channels WHERE id = ? AND guild_id = ?")
-        .bind(channel_id)
-        .bind(guild_id)
-        .fetch_optional(&state.db)
-        .await
-        .ok()
-        .flatten()
-        .is_some()
+    sqlx::query_scalar::<_, i64>(&crate::db::sql(
+        "SELECT 1 FROM channels WHERE id = ? AND guild_id = ?",
+    ))
+    .bind(channel_id)
+    .bind(guild_id)
+    .fetch_optional(&state.db)
+    .await
+    .ok()
+    .flatten()
+    .is_some()
 }
