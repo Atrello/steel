@@ -286,6 +286,17 @@ pub struct Message {
     pub components: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poll: Option<Poll>,
+    /// Stickers sent with the message, in send order.
+    #[serde(default)]
+    pub sticker_items: Vec<StickerItem>,
+}
+
+/// A sticker as it appears on a message: id, name and Discord's format type.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct StickerItem {
+    pub id: String,
+    pub name: String,
+    pub format_type: u8,
 }
 
 fn is_zero(n: &u32) -> bool {
@@ -395,6 +406,9 @@ pub struct CreateMessage {
     pub components: Vec<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub poll: Option<CreatePoll>,
+    /// Guild stickers to send with the message, at most three.
+    #[serde(default)]
+    pub sticker_ids: Vec<String>,
 }
 
 /// Reference to an uploaded file, as sent in a message's `attachments`.

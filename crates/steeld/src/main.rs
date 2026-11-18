@@ -25,6 +25,7 @@ mod search;
 mod session;
 mod settings;
 mod state;
+mod stickers;
 mod threads;
 mod uploads;
 

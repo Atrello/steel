@@ -39,6 +39,7 @@ pub fn router(state: AppState) -> Router {
         .merge(settings::routes())
         .merge(audit::routes())
         .merge(crate::onboarding::routes())
+        .merge(crate::stickers::routes())
         .merge(search::routes())
         .merge(crate::profile::routes())
         .merge(crate::roles::routes())
