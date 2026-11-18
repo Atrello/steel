@@ -1,8 +1,16 @@
+#![allow(clippy::result_large_err)]
 mod api;
 mod auth;
+mod chat;
 mod db;
+mod dm;
+mod events;
 mod gateway;
+mod members;
+mod presence;
+mod session;
 mod state;
+mod uploads;
 
 use std::net::SocketAddr;
 

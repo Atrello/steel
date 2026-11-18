@@ -7,7 +7,7 @@ use axum::{
 };
 use flint_protocol::{ApiError, LoginRequest, RegisterRequest, TokenResponse, User};
 
-use crate::{auth, gateway, state::AppState};
+use crate::{auth, chat, dm, gateway, members, presence, state::AppState, uploads};
 
 pub const API_PREFIX: &str = "/api/v10";
 
@@ -20,6 +20,14 @@ pub fn router(state: AppState) -> Router {
         .route(&format!("{API_PREFIX}/auth/login"), post(login))
         .route(&format!("{API_PREFIX}/users/@me"), get(me))
         .route("/gateway", get(gateway_socket))
+        .merge(chat::routes())
+        .merge(dm::routes())
+        .merge(presence::routes())
+        .merge(uploads::routes())
+        .merge(members::routes())
+        .layer(axum::extract::DefaultBodyLimit::max(
+            uploads::max_file_bytes() as usize * uploads::MAX_FILES + 1024 * 1024,
+        ))
         .with_state(state)
 }
 
@@ -34,7 +42,7 @@ pub fn api_error(status: StatusCode, code: u32, message: impl Into<String>) -> R
         .into_response()
 }
 
-fn internal(err: impl std::fmt::Display) -> Response {
+pub fn internal(err: impl std::fmt::Display) -> Response {
     tracing::error!("internal error: {err}");
     api_error(
         StatusCode::INTERNAL_SERVER_ERROR,

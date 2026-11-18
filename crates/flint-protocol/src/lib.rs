@@ -10,6 +10,7 @@ pub mod op {
     pub const DISPATCH: u8 = 0;
     pub const HEARTBEAT: u8 = 1;
     pub const IDENTIFY: u8 = 2;
+    pub const PRESENCE_UPDATE: u8 = 3;
     pub const RESUME: u8 = 6;
     pub const RECONNECT: u8 = 7;
     pub const INVALID_SESSION: u8 = 9;
@@ -91,6 +92,13 @@ pub struct TokenResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResumeData {
+    pub token: String,
+    pub session_id: String,
+    pub seq: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdentifyData {
     pub token: String,
 }
@@ -112,4 +120,217 @@ mod tests {
         assert_eq!(v["op"], 10);
         assert_eq!(v["d"]["heartbeat_interval"], 41250);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Guilds, channels, messages, invites
+// ---------------------------------------------------------------------------
+
+/// Channel types. Only text channels exist in this chunk.
+pub mod channel_type {
+    pub const GUILD_TEXT: u8 = 0;
+    pub const DM: u8 = 1;
+    pub const GROUP_DM: u8 = 3;
+}
+
+/// Relationship kinds, as in Discord's relationship API.
+pub mod relationship_type {
+    pub const FRIEND: u8 = 1;
+    pub const BLOCKED: u8 = 2;
+    pub const INCOMING_REQUEST: u8 = 3;
+    pub const OUTGOING_REQUEST: u8 = 4;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Channel {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guild_id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub position: i64,
+    #[serde(default)]
+    pub topic: Option<String>,
+    /// Participants of a DM or group DM. Empty for guild channels.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recipients: Vec<User>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Relationship {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: u8,
+    pub user: User,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateDm {
+    #[serde(default)]
+    pub recipient_id: Option<String>,
+    #[serde(default)]
+    pub recipients: Vec<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendFriendRequest {
+    pub username: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateRelationship {
+    #[serde(rename = "type", default)]
+    pub kind: Option<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Guild {
+    pub id: String,
+    pub name: String,
+    pub owner_id: String,
+    #[serde(default)]
+    pub channels: Vec<Channel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MessageReference {
+    #[serde(default)]
+    pub message_id: Option<String>,
+    #[serde(default)]
+    pub channel_id: Option<String>,
+    #[serde(default)]
+    pub guild_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Attachment {
+    pub id: String,
+    pub filename: String,
+    #[serde(default)]
+    pub content_type: Option<String>,
+    pub size: u64,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Message {
+    pub id: String,
+    pub channel_id: String,
+    pub author: User,
+    pub content: String,
+    pub timestamp: String,
+    #[serde(default)]
+    pub edited_timestamp: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_reference: Option<MessageReference>,
+    #[serde(rename = "type", default)]
+    pub kind: u8,
+    #[serde(default)]
+    pub attachments: Vec<Attachment>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateGuild {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateChannel {
+    pub name: String,
+    #[serde(rename = "type", default)]
+    pub kind: Option<u8>,
+    #[serde(default)]
+    pub topic: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateMessage {
+    pub content: String,
+    #[serde(default)]
+    pub message_reference: Option<MessageReference>,
+    /// Files staged with `POST /channels/{id}/attachments` and uploaded to their `upload_url`.
+    #[serde(default)]
+    pub attachments: Vec<UploadRef>,
+}
+
+/// Reference to an uploaded file, as sent in a message's `attachments`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadRef {
+    #[serde(default)]
+    pub id: serde_json::Value,
+    pub filename: String,
+    pub uploaded_filename: String,
+}
+
+/// Request for upload slots: `POST /channels/{id}/attachments`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StageFiles {
+    pub files: Vec<StageFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StageFile {
+    pub id: serde_json::Value,
+    pub filename: String,
+    pub file_size: u64,
+    #[serde(default)]
+    pub is_clip: bool,
+    #[serde(default)]
+    pub original_content_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StagedUpload {
+    pub id: serde_json::Value,
+    pub upload_url: String,
+    pub upload_filename: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StagedUploads {
+    pub attachments: Vec<StagedUpload>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditMessage {
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Invite {
+    pub code: String,
+    pub guild: Guild,
+    pub channel: Channel,
+}
+
+/// Presence status values.
+pub mod status {
+    pub const ONLINE: &str = "online";
+    pub const IDLE: &str = "idle";
+    pub const DND: &str = "dnd";
+    pub const INVISIBLE: &str = "invisible";
+    pub const OFFLINE: &str = "offline";
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReadState {
+    pub id: String,
+    pub last_message_id: Option<String>,
+    pub mention_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PresenceUpdate {
+    pub status: String,
+    #[serde(default)]
+    pub since: Option<u64>,
+    #[serde(default)]
+    pub afk: bool,
+    #[serde(default)]
+    pub activities: Vec<serde_json::Value>,
 }

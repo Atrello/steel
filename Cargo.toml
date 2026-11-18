@@ -10,7 +10,7 @@ rust-version = "1.80"
 
 [workspace.dependencies]
 flint-protocol = { path = "crates/flint-protocol" }
-axum = { version = "0.8", features = ["ws"] }
+axum = { version = "0.8", features = ["ws", "multipart"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
