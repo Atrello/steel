@@ -38,10 +38,11 @@ Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.p
 - Polls: create with `poll` on a message (2 to 10 answers, 1 to 768 hours, optional multiselect); vote with `PUT .../polls/{id}/answers/@me`; the author ends it with `POST .../polls/{id}/expire`. Messages carry `poll` with counts and `me_voted`. Events: `MESSAGE_POLL_VOTE_ADD`, `MESSAGE_POLL_VOTE_REMOVE`.
 - Threads: start from a message (`POST .../messages/{id}/threads`, one per message, id = message id) or standalone (`POST .../channels/{id}/threads`, public only). Listed in `GET /guilds/{id}/threads/active`; events `THREAD_CREATE`. Thread members, private threads, and archiving are not implemented yet.
 - Member list: Flint's op 37 subscription (`channels: {channel_id: [[start, end]]}`) gets `GUILD_MEMBER_LIST_UPDATE` SYNC ops on the same socket. One `everyone` list sorted by username, all in the `offline` group. Non-members get nothing. Presence groups are not included yet.
+- Forums: a forum is a channel of type 15. `POST /channels/{id}/threads` on a forum creates a post with a required `message.content` starter (the post id equals the starter message id). `GET /channels/{id}/threads/search` lists open posts newest first, with `first_messages`. Forum posts are threads, so `THREAD_CREATE` and the guild active list cover them. Tags and sort orders other than newest activity are not implemented yet.
 - Custom emoji: `GET/POST /guilds/{id}/emojis` (PNG or GIF data URI, up to 256 KiB, 50 per guild, `MANAGE_GUILD`), `PATCH`/`DELETE /guilds/{id}/emojis/{id}`. Images are served from `/cdn/emojis/{id}.{ext}`. Event `GUILD_EMOJIS_UPDATE` carries the full list. Stickers are not implemented yet.
 - Search: `GET /guilds/{id}/messages/search` and `GET /channels/{id}/messages/search` with `content`, `limit`, `offset`. Case-insensitive substring, newest first.
 
-Not yet implemented: forums, emoji and stickers, profiles and settings, audit log, moderation beyond kick and ban, onboarding, roles and permissions, mention counts, voice-related member fields (mute, deafen).
+Not yet implemented:, emoji and stickers, profiles and settings, audit log, moderation beyond kick and ban, onboarding, roles and permissions, mention counts, voice-related member fields (mute, deafen).
 
 ## Run locally
 
