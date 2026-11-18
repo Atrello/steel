@@ -13,6 +13,7 @@ mod gateway;
 mod invite_page;
 mod member_list;
 mod members;
+mod onboarding;
 mod perms;
 mod pins;
 mod polls;

@@ -38,6 +38,7 @@ pub fn router(state: AppState) -> Router {
         .merge(emojis::routes())
         .merge(settings::routes())
         .merge(audit::routes())
+        .merge(crate::onboarding::routes())
         .merge(search::routes())
         .merge(crate::profile::routes())
         .merge(crate::roles::routes())
