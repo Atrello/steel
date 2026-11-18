@@ -10,6 +10,7 @@ pub mod op {
     pub const DISPATCH: u8 = 0;
     pub const HEARTBEAT: u8 = 1;
     pub const IDENTIFY: u8 = 2;
+    pub const PRESENCE_UPDATE: u8 = 3;
     pub const RESUME: u8 = 6;
     pub const RECONNECT: u8 = 7;
     pub const INVALID_SESSION: u8 = 9;
@@ -245,4 +246,31 @@ pub struct Invite {
     pub code: String,
     pub guild: Guild,
     pub channel: Channel,
+}
+
+/// Presence status values.
+pub mod status {
+    pub const ONLINE: &str = "online";
+    pub const IDLE: &str = "idle";
+    pub const DND: &str = "dnd";
+    pub const INVISIBLE: &str = "invisible";
+    pub const OFFLINE: &str = "offline";
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReadState {
+    pub id: String,
+    pub last_message_id: Option<String>,
+    pub mention_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PresenceUpdate {
+    pub status: String,
+    #[serde(default)]
+    pub since: Option<u64>,
+    #[serde(default)]
+    pub afk: bool,
+    #[serde(default)]
+    pub activities: Vec<serde_json::Value>,
 }

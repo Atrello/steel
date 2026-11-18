@@ -62,6 +62,13 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS messages_channel_idx ON messages (channel_id, id);
 
+CREATE TABLE IF NOT EXISTS read_states (
+    user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    channel_id      TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    last_message_id TEXT,
+    PRIMARY KEY (user_id, channel_id)
+);
+
 CREATE TABLE IF NOT EXISTS invites (
     code       TEXT PRIMARY KEY,
     guild_id   TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,

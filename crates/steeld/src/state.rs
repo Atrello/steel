@@ -1,17 +1,20 @@
+use std::sync::Arc;
+
 use tokio::sync::broadcast;
 
-use crate::{db::Db, events::Dispatch};
+use crate::{db::Db, events::Dispatch, presence::PresenceTracker};
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: Db,
     pub events: broadcast::Sender<Dispatch>,
+    pub presence: Arc<PresenceTracker>,
 }
 
 impl AppState {
     pub fn new(db: Db) -> Self {
         let (events, _) = broadcast::channel(1024);
-        Self { db, events }
+        Self { db, events, presence: Arc::new(PresenceTracker::default()) }
     }
 
     /// Publish a dispatch to the connected users in `targets`. No-op when nobody is connected.

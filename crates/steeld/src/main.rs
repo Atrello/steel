@@ -5,6 +5,7 @@ mod db;
 mod dm;
 mod events;
 mod gateway;
+mod presence;
 mod state;
 
 use std::net::SocketAddr;

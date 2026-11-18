@@ -1,9 +1,10 @@
 # Smoke test for a running steeld. Usage: STEEL_URL=http://127.0.0.1:8080 python3 scripts/smoke_test.py
 # Requires: pip install websockets
-import asyncio, json, urllib.request, websockets
+import asyncio, json, time, urllib.request, websockets
 import os
 BASE=os.environ.get("STEEL_URL","http://127.0.0.1:8099")
 B=BASE+"/api/v10"
+RUN=str(int(time.time()))[-6:]
 def req(method, path, body=None, token=None):
     data = json.dumps(body).encode() if body is not None else None
     r = urllib.request.Request(B+path, data=data, method=method, headers={"content-type":"application/json", **({"authorization":"Bearer "+token} if token else {})})
@@ -14,8 +15,8 @@ def req(method, path, body=None, token=None):
         return e.code, json.loads(e.read() or b"null")
 def must(res, ok=(200,201,204)):
     assert res[0] in ok, res; return res[1]
-alice = must(req("POST","/auth/register",{"username":"alice_e2e","password":"password123"}))["token"]
-bob = must(req("POST","/auth/register",{"username":"bob_e2e","password":"password123"}))["token"]
+alice = must(req("POST","/auth/register",{"username":f"alice_{RUN}","password":"password123"}))["token"]
+bob = must(req("POST","/auth/register",{"username":f"bob_{RUN}","password":"password123"}))["token"]
 guild = must(req("POST","/guilds",{"name":"Spark Club"}, alice))
 gid = guild["id"]; chan = guild["channels"][0]["id"]
 print("guild", guild["name"], "channels", [c["name"] for c in guild["channels"]])
@@ -47,6 +48,6 @@ async def main():
             ev = json.loads(await ws.recv())
             if ev["t"] == "MESSAGE_DELETE": break
         print("delete event", ev["t"], ev["d"]["id"]==m["id"])
-        print("stranger guild access ->", req("GET",f"/guilds/{gid}", token=must(req("POST","/auth/register",{"username":"carol_e2e","password":"password123"}))["token"])[0])
+        print("stranger guild access ->", req("GET",f"/guilds/{gid}", token=must(req("POST","/auth/register",{"username":f"carol_{RUN}","password":"password123"}))["token"])[0])
         print("empty content ->", req("POST",f"/channels/{chan}/messages",{"content":"   "},alice)[0])
 asyncio.run(main())

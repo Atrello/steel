@@ -5,12 +5,12 @@
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket};
-use flint_protocol::{op, GatewayFrame, IdentifyData, User};
+use flint_protocol::{op, GatewayFrame, IdentifyData, PresenceUpdate, User};
 use futures_util::StreamExt;
 use serde_json::json;
 use tokio::sync::broadcast::error::RecvError;
 
-use crate::{api, chat, dm, events::Dispatch, state::AppState};
+use crate::{api, chat, dm, events::Dispatch, presence, state::AppState};
 
 pub const HEARTBEAT_INTERVAL_MS: u64 = 41_250;
 /// Close the socket if no heartbeat arrives within this window.
@@ -71,6 +71,14 @@ pub async fn run(state: AppState, mut socket: WebSocket) {
             return;
         }
     };
+    let read_states = match presence::read_states_for_user(&state, &user.id).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!("READY: could not load read state: {e}");
+            close(&mut socket, 4000, "Unknown error.").await;
+            return;
+        }
+    };
     let mut seq: u64 = 1;
     let ready = GatewayFrame::dispatch(
         seq,
@@ -82,10 +90,15 @@ pub async fn run(state: AppState, mut socket: WebSocket) {
             "resume_gateway_url": "/gateway",
             "guilds": guilds,
             "private_channels": private_channels,
+            "read_state": read_states,
         }),
     );
     if send(&mut socket, &ready).await.is_err() {
         return;
+    }
+
+    if state.presence.connect(&user.id) {
+        presence::broadcast_presence(&state, &user.id).await;
     }
 
     let heartbeat_deadline = tokio::time::sleep(HEARTBEAT_GRACE);
@@ -114,11 +127,20 @@ pub async fn run(state: AppState, mut socket: WebSocket) {
                 match msg {
                     Message::Text(text) => {
                         let Ok(frame) = serde_json::from_str::<GatewayFrame>(&text) else { break };
-                        if frame.op == op::HEARTBEAT {
-                            heartbeat_deadline.as_mut().reset(tokio::time::Instant::now() + HEARTBEAT_GRACE);
-                            if send(&mut socket, &GatewayFrame::ack()).await.is_err() {
-                                break;
+                        match frame.op {
+                            op::HEARTBEAT => {
+                                heartbeat_deadline.as_mut().reset(tokio::time::Instant::now() + HEARTBEAT_GRACE);
+                                if send(&mut socket, &GatewayFrame::ack()).await.is_err() {
+                                    break;
+                                }
                             }
+                            op::PRESENCE_UPDATE => {
+                                if let Ok(update) = serde_json::from_value::<PresenceUpdate>(frame.d) {
+                                    state.presence.set_status(&user.id, &update.status);
+                                    presence::broadcast_presence(&state, &user.id).await;
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     Message::Close(_) => break,
@@ -126,6 +148,11 @@ pub async fn run(state: AppState, mut socket: WebSocket) {
                 }
             }
         }
+    }
+
+    // Last socket for this user gone: announce offline.
+    if state.presence.disconnect(&user.id) {
+        presence::broadcast_presence(&state, &user.id).await;
     }
 }
 
