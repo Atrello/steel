@@ -395,6 +395,8 @@ pub struct CreateChannel {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateMessage {
+    /// Poll and sticker-only messages may omit content, as Discord clients send them.
+    #[serde(default)]
     pub content: String,
     #[serde(default)]
     pub message_reference: Option<MessageReference>,

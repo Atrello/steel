@@ -436,6 +436,50 @@ async fn main() {
     assert_eq!(st, 403, "bob is blocked by the saved overwrite");
     step("PASS overwrite enforced");
 
+    step("polls: alice creates a poll through Flint; the message must decode with its answers");
+    let create = model::polls::Create {
+        question: format!("Pick one {tag}"),
+        answers: vec![
+            model::polls::Media { text: "Red".into(), emoji: None },
+            model::polls::Media { text: "Blue".into(), emoji: None },
+        ],
+        duration: 24,
+        multiselect: false,
+    };
+    let poll_msg = match api_alice
+        .execute(Command::Polls(client_core::polls::Request {
+            channel, message: None, request: 901, nonce: "e2e-poll".into(),
+            action: client_core::polls::Action::Create(Box::new(create)),
+        }))
+        .await
+    {
+        Event::Polls(client_core::polls::Event::Result { result: Ok(m), .. }) => *m,
+        Event::Polls(client_core::polls::Event::Result { result: Err(e), .. }) => panic!("poll create refused: {e}"),
+        _ => panic!("poll create: unexpected event"),
+    };
+    let poll = poll_msg.poll.as_ref().expect("poll on message");
+    assert_eq!(poll.answers.len(), 2, "two answers");
+    let poll_id = poll_msg.id;
+    step("PASS poll create decodes in Flint");
+
+    step("polls: bob votes for answer 1 through Flint; alice's gateway must see the vote");
+    let vote = api_bob
+        .execute(Command::Polls(client_core::polls::Request {
+            channel, message: Some(poll_id), request: 902, nonce: "e2e-vote".into(),
+            action: client_core::polls::Action::Vote(vec![1]),
+        }))
+        .await;
+    match vote {
+        Event::Polls(client_core::polls::Event::Result { result: Ok(_), .. }) => {}
+        _ => panic!("poll vote failed"),
+    }
+    wait_for(&mut alice_rx, "alice sees poll vote", |e| match e {
+        Event::Polls(client_core::polls::Event::Vote { add: true, .. }) => Some(()),
+        _ => None,
+    })
+    .await;
+    step("PASS poll vote and gateway update");
+
     step("ALL CHECKS PASSED");
     std::process::exit(0);
 }
