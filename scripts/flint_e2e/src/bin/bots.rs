@@ -411,6 +411,30 @@ async fn run_checks(
         return Err(format!("unexpected suggestions for 'he': {choices:?}"));
     }
     step(&format!("PASS autocomplete suggestions for 'he': {choices:?}"));
+
+    step("member installs the bot's application from its profile; the installed list shows it, then removing it clears it");
+    let bot: Id = bot_id.parse().unwrap();
+    for install in [true, false] {
+        let event = api
+            .execute(Command::AppInstall {
+                request: 8,
+                bot,
+                install,
+            })
+            .await;
+        match event {
+            Event::AppInstall { result: Ok(()), .. } => {}
+            _ => return Err(format!("install {install}: unexpected event")),
+        }
+        let listed = match api.execute(Command::AppInstalls { request: 9 }).await {
+            Event::AppInstalls { result: Ok(ids), .. } => ids.contains(&bot),
+            _ => return Err(format!("list after install {install}: unexpected event")),
+        };
+        if listed != install {
+            return Err(format!("installed list says {listed}, expected {install}"));
+        }
+    }
+    step("PASS install and remove from a bot profile");
     Ok(())
 }
 

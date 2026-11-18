@@ -86,6 +86,10 @@ pub fn routes() -> Router<AppState> {
             axum::routing::patch(edit_guild_command).delete(delete_guild_command),
         )
         .route(
+            &format!("{API_PREFIX}/users/@me/installed-applications"),
+            axum::routing::get(list_installed),
+        )
+        .route(
             &format!("{API_PREFIX}/users/@me/applications/{{app_id}}"),
             axum::routing::put(install_app).delete(uninstall_app),
         )
@@ -1679,6 +1683,39 @@ async fn is_installed(state: &AppState, user_id: &str, application_id: &str) -> 
     Ok(found.is_some())
 }
 
+/// The application named by its id, or by its bot user's id, so a client can install from a bot's profile.
+async fn install_target(state: &AppState, id: &str) -> ApiResult<AppRow> {
+    sqlx::query_as(&crate::db::sql(
+        "SELECT id, owner_id, bot_user_id, name, description FROM applications WHERE id = ? OR bot_user_id = ?",
+    ))
+    .bind(id)
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(chat::db)?
+    .ok_or_else(|| unknown("Application", 10002))
+}
+
+/// `GET /users/@me/applications`: the applications installed for you, with their bot user ids.
+async fn list_installed(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    done(async {
+        let user = chat::authed(&state, &headers).await?;
+        let rows: Vec<(String, String)> = sqlx::query_as(&crate::db::sql(
+            "SELECT a.id, a.bot_user_id FROM user_installs i JOIN applications a ON a.id = i.application_id WHERE i.user_id = ?",
+        ))
+        .bind(&user.id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(chat::db)?;
+        let out: Vec<Value> = rows
+            .into_iter()
+            .map(|(id, bot_user_id)| json!({"id": id, "bot_user_id": bot_user_id}))
+            .collect();
+        Ok(Json(out).into_response())
+    }
+    .await)
+}
+
 /// `PUT /users/@me/applications/{app}`: install an application for yourself.
 async fn install_app(
     State(state): State<AppState>,
@@ -1687,10 +1724,10 @@ async fn install_app(
 ) -> Response {
     done(async {
         let user = chat::authed(&state, &headers).await?;
-        app_row(&state, &app_id).await?;
+        let app = install_target(&state, &app_id).await?;
         sqlx::query(&crate::db::sql("INSERT OR IGNORE INTO user_installs (user_id, application_id, created_at) VALUES (?, ?, ?)"))
             .bind(&user.id)
-            .bind(&app_id)
+            .bind(&app.id)
             .bind(chat::now_iso())
             .execute(&state.db)
             .await
@@ -1708,11 +1745,12 @@ async fn uninstall_app(
     done(
         async {
             let user = chat::authed(&state, &headers).await?;
+            let app = install_target(&state, &app_id).await?;
             sqlx::query(&crate::db::sql(
                 "DELETE FROM user_installs WHERE user_id = ? AND application_id = ?",
             ))
             .bind(&user.id)
-            .bind(&app_id)
+            .bind(&app.id)
             .execute(&state.db)
             .await
             .map_err(chat::db)?;
