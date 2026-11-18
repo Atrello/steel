@@ -14,7 +14,7 @@ deploy/                 Dockerfile, docker-compose.yml, example env file
 
 ## Status
 
-Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.py`, `scripts/dm_smoke_test.py`, `scripts/presence_smoke_test.py`, `scripts/upload_smoke_test.py`, `scripts/resume_smoke_test.py`, `scripts/staged_upload_smoke_test.py`, `scripts/members_smoke_test.py`, `scripts/phase2_smoke_test.py`, `scripts/polls_smoke_test.py`, `scripts/bots_smoke_test.py`, `scripts/threads_smoke_test.py`, `scripts/member_list_smoke_test.py`. Implemented so far:
+Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.py`, `scripts/dm_smoke_test.py`, `scripts/presence_smoke_test.py`, `scripts/upload_smoke_test.py`, `scripts/resume_smoke_test.py`, `scripts/staged_upload_smoke_test.py`, `scripts/members_smoke_test.py`, `scripts/phase2_smoke_test.py`, `scripts/polls_smoke_test.py`, `scripts/bots_smoke_test.py`, `scripts/bots_context_smoke_test.py`, `scripts/threads_smoke_test.py`, `scripts/member_list_smoke_test.py`, `scripts/invite_page_smoke_test.py`. Implemented so far:
 
 - Accounts: `POST /api/v10/auth/register`, `POST /api/v10/auth/login`, `GET /api/v10/users/@me`
 - Argon2id password hashes; opaque bearer tokens stored only as SHA-256 hashes
@@ -82,4 +82,8 @@ Databases created by commits between `136f9a6` and `4f36470` were built with an 
 - Interactions: Flint submits `POST /interactions` (commands, components, modal submits). Steel sends the bot `INTERACTION_CREATE`. The bot answers with `POST /interactions/{id}/{token}/callback` (messages, deferred, update, modal) and then followups under `/webhooks/{app}/{token}`, all valid for 15 minutes.
 - Bot messages can carry components and an ephemeral flag (64), which reaches only the invoking user.
 - Example bot: `examples/echo-bot/`. Smoke test: `scripts/bots_smoke_test.py`. Flint-side check: `cargo run --bin bots` in `scripts/flint_e2e` (needs steeld on 127.0.0.1:8080).
-- Not yet: autocomplete (Flint sends no autocomplete request), bot DMs, and user-installed apps.
+- Autocomplete: an option with `autocomplete: true` gets `INTERACTION_CREATE` (type 4) when a member types. The bot answers with `callback` type 8 and the choices go back to the invoker as `INTERACTION_AUTOCOMPLETE_RESULT`.
+- Bot DMs: a user opens a DM with the bot (`POST /users/@me/channels`), sees its global commands in the DM index, and runs them there.
+- User installs: `PUT /users/@me/applications/{app}` installs an application for yourself. Its global commands then work in your DMs and guilds, without the bot in the guild. `DELETE` removes it.
+- Smoke tests: `scripts/bots_context_smoke_test.py` covers bot DMs, autocomplete and user installs.
+- Flint's client already requests the command index for DMs with a bot. It has no autocomplete request and no way to see user installs yet, so those two need client work.
