@@ -84,13 +84,13 @@ pub async fn presence_audience(
     user_id: &str,
 ) -> Result<Vec<String>, sqlx::Error> {
     let rows: Vec<(String,)> = sqlx::query_as(
-        "SELECT DISTINCT other FROM ( \
+        &crate::db::sql("SELECT DISTINCT other FROM ( \
             SELECT m2.user_id AS other FROM guild_members m1 JOIN guild_members m2 ON m2.guild_id = m1.guild_id WHERE m1.user_id = ? \
             UNION \
             SELECT r2.user_id AS other FROM channel_recipients r1 JOIN channel_recipients r2 ON r2.channel_id = r1.channel_id WHERE r1.user_id = ? \
             UNION \
             SELECT target_id AS other FROM relationships WHERE user_id = ? AND kind = 1 \
-         ) WHERE other <> ?",
+         ) WHERE other <> ?"),
     )
     .bind(user_id).bind(user_id).bind(user_id).bind(user_id)
     .fetch_all(&state.db)
@@ -124,11 +124,12 @@ pub async fn read_states_for_user(
     state: &AppState,
     user_id: &str,
 ) -> Result<Vec<ReadState>, sqlx::Error> {
-    let rows: Vec<(String, Option<String>)> =
-        sqlx::query_as("SELECT channel_id, last_message_id FROM read_states WHERE user_id = ?")
-            .bind(user_id)
-            .fetch_all(&state.db)
-            .await?;
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(&crate::db::sql(
+        "SELECT channel_id, last_message_id FROM read_states WHERE user_id = ?",
+    ))
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await?;
     Ok(rows
         .into_iter()
         .map(|(id, last)| ReadState {
@@ -166,9 +167,9 @@ async fn ack_message(
     }
     // Only move the read marker forward.
     let update = sqlx::query(
-        "INSERT INTO read_states (user_id, channel_id, last_message_id) VALUES (?, ?, ?) \
+        &crate::db::sql("INSERT INTO read_states (user_id, channel_id, last_message_id) VALUES (?, ?, ?) \
          ON CONFLICT(user_id, channel_id) DO UPDATE SET last_message_id = excluded.last_message_id \
-         WHERE CAST(excluded.last_message_id AS INTEGER) > CAST(COALESCE(read_states.last_message_id, '0') AS INTEGER)",
+         WHERE CAST(excluded.last_message_id AS BIGINT) > CAST(COALESCE(read_states.last_message_id, '0') AS INTEGER)"),
     )
     .bind(&user.id)
     .bind(&channel_id)

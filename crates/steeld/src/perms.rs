@@ -46,21 +46,22 @@ pub fn missing() -> Response {
 /// Guild-wide permissions: owner and ADMINISTRATOR get everything, otherwise the OR of the
 /// `@everyone` role and the member's roles.
 pub async fn guild_permissions(state: &AppState, guild_id: &str, user_id: &str) -> ApiResult<u64> {
-    let owner: Option<(String,)> = sqlx::query_as("SELECT owner_id FROM guilds WHERE id = ?")
-        .bind(guild_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(crate::chat::db)?;
+    let owner: Option<(String,)> =
+        sqlx::query_as(&crate::db::sql("SELECT owner_id FROM guilds WHERE id = ?"))
+            .bind(guild_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(crate::chat::db)?;
     let Some((owner_id,)) = owner else {
         return Ok(0);
     };
     if owner_id == user_id {
         return Ok(ALL);
     }
-    let rows: Vec<(String,)> = sqlx::query_as(
+    let rows: Vec<(String,)> = sqlx::query_as(&crate::db::sql(
         "SELECT permissions FROM roles WHERE guild_id = ? AND (id = ? OR id IN \
          (SELECT role_id FROM member_roles WHERE guild_id = ? AND user_id = ?))",
-    )
+    ))
     .bind(guild_id)
     .bind(guild_id)
     .bind(guild_id)
@@ -87,20 +88,21 @@ pub async fn channel_permissions(
     if base & ADMINISTRATOR != 0 {
         return Ok(ALL);
     }
-    let rows: Vec<(String, i64, String, String)> = sqlx::query_as(
+    let rows: Vec<(String, i64, String, String)> = sqlx::query_as(&crate::db::sql(
         "SELECT target_id, target_type, allow, deny FROM overwrites WHERE channel_id = ?",
-    )
+    ))
     .bind(channel_id)
     .fetch_all(&state.db)
     .await
     .map_err(crate::chat::db)?;
-    let my_roles: Vec<(String,)> =
-        sqlx::query_as("SELECT role_id FROM member_roles WHERE guild_id = ? AND user_id = ?")
-            .bind(guild_id)
-            .bind(user_id)
-            .fetch_all(&state.db)
-            .await
-            .map_err(crate::chat::db)?;
+    let my_roles: Vec<(String,)> = sqlx::query_as(&crate::db::sql(
+        "SELECT role_id FROM member_roles WHERE guild_id = ? AND user_id = ?",
+    ))
+    .bind(guild_id)
+    .bind(user_id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(crate::chat::db)?;
     let my_roles: Vec<String> = my_roles.into_iter().map(|(id,)| id).collect();
     let parse = |s: &str| s.parse::<u64>().unwrap_or(0);
 
@@ -171,11 +173,12 @@ pub async fn require_channel_row(
 
 /// Whether `user_id` owns the guild. Owners pass every hierarchy check.
 pub async fn is_owner(state: &AppState, guild_id: &str, user_id: &str) -> ApiResult<bool> {
-    let owner: Option<(String,)> = sqlx::query_as("SELECT owner_id FROM guilds WHERE id = ?")
-        .bind(guild_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(crate::chat::db)?;
+    let owner: Option<(String,)> =
+        sqlx::query_as(&crate::db::sql("SELECT owner_id FROM guilds WHERE id = ?"))
+            .bind(guild_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(crate::chat::db)?;
     Ok(owner.is_some_and(|(id,)| id == user_id))
 }
 
@@ -185,10 +188,10 @@ pub async fn top_position(state: &AppState, guild_id: &str, user_id: &str) -> Ap
     if is_owner(state, guild_id, user_id).await? {
         return Ok(i64::MAX);
     }
-    let top: Option<(Option<i64>,)> = sqlx::query_as(
+    let top: Option<(Option<i64>,)> = sqlx::query_as(&crate::db::sql(
         "SELECT MAX(position) FROM roles WHERE guild_id = ? AND (id = ? OR id IN \
          (SELECT role_id FROM member_roles WHERE guild_id = ? AND user_id = ?))",
-    )
+    ))
     .bind(guild_id)
     .bind(guild_id)
     .bind(guild_id)
@@ -210,13 +213,14 @@ pub async fn require_above_role(
     if top == i64::MAX {
         return Ok(());
     }
-    let position: Option<(i64,)> =
-        sqlx::query_as("SELECT position FROM roles WHERE id = ? AND guild_id = ?")
-            .bind(role_id)
-            .bind(guild_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(crate::chat::db)?;
+    let position: Option<(i64,)> = sqlx::query_as(&crate::db::sql(
+        "SELECT position FROM roles WHERE id = ? AND guild_id = ?",
+    ))
+    .bind(role_id)
+    .bind(guild_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(crate::chat::db)?;
     match position {
         Some((position,)) if position < top => Ok(()),
         _ => Err(missing()),

@@ -85,7 +85,7 @@ pub async fn create(
 ) -> Result<(), sqlx::Error> {
     let expires_at = (chrono::Utc::now() + chrono::Duration::hours(i64::from(poll.duration)))
         .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
-    sqlx::query("INSERT INTO polls (message_id, question, expires_at, multiselect, finalized) VALUES (?, ?, ?, ?, 0)")
+    sqlx::query(&crate::db::sql("INSERT INTO polls (message_id, question, expires_at, multiselect, finalized) VALUES (?, ?, ?, ?, 0)"))
         .bind(message_id)
         .bind(poll.question.text.trim())
         .bind(expires_at)
@@ -102,9 +102,9 @@ pub async fn create(
                 (None, Some(name)) if !name.is_empty() => Some(name.clone()),
                 _ => None,
             });
-        sqlx::query(
+        sqlx::query(&crate::db::sql(
             "INSERT INTO poll_answers (message_id, answer_id, text, emoji) VALUES (?, ?, ?, ?)",
-        )
+        ))
         .bind(message_id)
         .bind(index as i64 + 1)
         .bind(answer.poll_media.text.trim())
@@ -128,25 +128,26 @@ pub async fn hydrate(
 }
 
 async fn load(state: &AppState, me: &str, message_id: &str) -> Result<Option<Poll>, sqlx::Error> {
-    let row: Option<(String, Option<String>, bool, bool)> = sqlx::query_as(
+    let row: Option<(String, Option<String>, i64, i64)> = sqlx::query_as(&crate::db::sql(
         "SELECT question, expires_at, multiselect, finalized FROM polls WHERE message_id = ?",
-    )
+    ))
     .bind(message_id)
     .fetch_optional(&state.db)
     .await?;
     let Some((question, expires_at, multiselect, finalized)) = row else {
         return Ok(None);
     };
-    let answers: Vec<(i64, String, Option<String>)> = sqlx::query_as(
+    let (multiselect, finalized) = (multiselect != 0, finalized != 0);
+    let answers: Vec<(i64, String, Option<String>)> = sqlx::query_as(&crate::db::sql(
         "SELECT answer_id, text, emoji FROM poll_answers WHERE message_id = ? ORDER BY answer_id",
-    )
+    ))
     .bind(message_id)
     .fetch_all(&state.db)
     .await?;
-    let counts: Vec<(i64, i64, i64)> = sqlx::query_as(
+    let counts: Vec<(i64, i64, i64)> = sqlx::query_as(&crate::db::sql(
         "SELECT answer_id, COUNT(*), MAX(CASE WHEN user_id = ? THEN 1 ELSE 0 END) \
          FROM poll_votes WHERE message_id = ? GROUP BY answer_id",
-    )
+    ))
     .bind(me)
     .bind(message_id)
     .fetch_all(&state.db)
@@ -214,8 +215,8 @@ async fn vote(
         if message.channel_id != channel_id {
             return Err(chat::missing_message());
         }
-        let poll: Option<(bool, bool, Option<String>)> = sqlx::query_as(
-            "SELECT multiselect, finalized, expires_at FROM polls WHERE message_id = ?",
+        let poll: Option<(i64, i64, Option<String>)> = sqlx::query_as(
+            &crate::db::sql("SELECT multiselect, finalized, expires_at FROM polls WHERE message_id = ?"),
         )
         .bind(&message_id)
         .fetch_optional(&state.db)
@@ -224,6 +225,7 @@ async fn vote(
         let Some((multiselect, finalized, expires_at)) = poll else {
             return Err(chat::missing_message());
         };
+        let (multiselect, finalized) = (multiselect != 0, finalized != 0);
         let expired = expires_at
             .as_deref()
             .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
@@ -239,7 +241,7 @@ async fn vote(
         {
             return Err(invalid("invalid poll answers"));
         }
-        let valid: HashSet<i64> = sqlx::query_scalar("SELECT answer_id FROM poll_answers WHERE message_id = ?")
+        let valid: HashSet<i64> = sqlx::query_scalar(&crate::db::sql("SELECT answer_id FROM poll_answers WHERE message_id = ?"))
             .bind(&message_id)
             .fetch_all(&state.db)
             .await
@@ -251,7 +253,7 @@ async fn vote(
         }
 
         let previous: Vec<i64> = sqlx::query_scalar(
-            "SELECT answer_id FROM poll_votes WHERE message_id = ? AND user_id = ?",
+            &crate::db::sql("SELECT answer_id FROM poll_votes WHERE message_id = ? AND user_id = ?"),
         )
         .bind(&message_id)
         .bind(&user.id)
@@ -264,7 +266,7 @@ async fn vote(
 
         let mut tx = state.db.begin().await.map_err(db)?;
         for answer in &removed {
-            sqlx::query("DELETE FROM poll_votes WHERE message_id = ? AND user_id = ? AND answer_id = ?")
+            sqlx::query(&crate::db::sql("DELETE FROM poll_votes WHERE message_id = ? AND user_id = ? AND answer_id = ?"))
                 .bind(&message_id)
                 .bind(&user.id)
                 .bind(i64::from(*answer))
@@ -273,7 +275,7 @@ async fn vote(
                 .map_err(db)?;
         }
         for answer in &added {
-            sqlx::query("INSERT INTO poll_votes (message_id, answer_id, user_id, created_at) VALUES (?, ?, ?, ?)")
+            sqlx::query(&crate::db::sql("INSERT INTO poll_votes (message_id, answer_id, user_id, created_at) VALUES (?, ?, ?, ?)"))
                 .bind(&message_id)
                 .bind(i64::from(*answer))
                 .bind(&user.id)
@@ -317,11 +319,13 @@ async fn expire(
         if message.author_id != user.id {
             return Err(chat::no_access());
         }
-        let updated = sqlx::query("UPDATE polls SET finalized = 1 WHERE message_id = ?")
-            .bind(&message_id)
-            .execute(&state.db)
-            .await
-            .map_err(db)?;
+        let updated = sqlx::query(&crate::db::sql(
+            "UPDATE polls SET finalized = 1 WHERE message_id = ?",
+        ))
+        .bind(&message_id)
+        .execute(&state.db)
+        .await
+        .map_err(db)?;
         if updated.rows_affected() == 0 {
             return Err(chat::missing_message());
         }

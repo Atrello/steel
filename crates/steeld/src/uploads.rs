@@ -90,7 +90,7 @@ pub async fn store(
         .await
         .map_err(crate::api::internal)?;
     let size = file.bytes.len() as u64;
-    sqlx::query("INSERT INTO attachments (id, message_id, channel_id, filename, content_type, size, path) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    sqlx::query(&crate::db::sql("INSERT INTO attachments (id, message_id, channel_id, filename, content_type, size, path) VALUES (?, ?, ?, ?, ?, ?, ?)"))
         .bind(&id)
         .bind(message_id)
         .bind(channel_id)
@@ -139,7 +139,7 @@ pub async fn hydrate(
     }
     let placeholders = vec!["?"; messages.len()].join(",");
     let sql = format!(
-        "SELECT message_id, id, channel_id, filename, content_type, size FROM attachments WHERE message_id IN ({placeholders}) ORDER BY rowid"
+        "SELECT message_id, id, channel_id, filename, content_type, size FROM attachments WHERE message_id IN ({placeholders}) ORDER BY CAST(id AS BIGINT)"
     );
     let mut q = sqlx::query_as::<_, (String, String, String, String, Option<String>, i64)>(&sql);
     for m in messages.iter() {
@@ -162,11 +162,12 @@ pub async fn hydrate(
 
 /// Remove stored files for a message (before the message row is deleted).
 pub async fn remove_for_message(state: &AppState, message_id: &str) -> Result<(), sqlx::Error> {
-    let paths: Vec<(String, String)> =
-        sqlx::query_as("SELECT path, channel_id FROM attachments WHERE message_id = ?")
-            .bind(message_id)
-            .fetch_all(&state.db)
-            .await?;
+    let paths: Vec<(String, String)> = sqlx::query_as(&crate::db::sql(
+        "SELECT path, channel_id FROM attachments WHERE message_id = ?",
+    ))
+    .bind(message_id)
+    .fetch_all(&state.db)
+    .await?;
     for (rel, _) in paths {
         let full = data_dir().join(&rel);
         let _ = tokio::fs::remove_file(&full).await;
@@ -183,11 +184,12 @@ pub async fn remove_for_channels(
     channel_ids: &[String],
 ) -> Result<(), sqlx::Error> {
     for channel_id in channel_ids {
-        let paths: Vec<(String,)> =
-            sqlx::query_as("SELECT path FROM attachments WHERE channel_id = ?")
-                .bind(channel_id)
-                .fetch_all(&state.db)
-                .await?;
+        let paths: Vec<(String,)> = sqlx::query_as(&crate::db::sql(
+            "SELECT path FROM attachments WHERE channel_id = ?",
+        ))
+        .bind(channel_id)
+        .fetch_all(&state.db)
+        .await?;
         for (rel,) in paths {
             let full = data_dir().join(&rel);
             let _ = tokio::fs::remove_file(&full).await;
@@ -203,9 +205,9 @@ async fn serve_attachment(
     State(state): State<AppState>,
     Path((channel_id, attachment_id, filename)): Path<(String, String, String)>,
 ) -> Response {
-    let row: Option<(String, Option<String>, String)> = match sqlx::query_as(
+    let row: Option<(String, Option<String>, String)> = match sqlx::query_as(&crate::db::sql(
         "SELECT path, content_type, filename FROM attachments WHERE id = ? AND channel_id = ?",
-    )
+    ))
     .bind(&attachment_id)
     .bind(&channel_id)
     .fetch_optional(&state.db)
@@ -301,7 +303,7 @@ async fn stage_uploads(
                 return Err(api_error(StatusCode::PAYLOAD_TOO_LARGE, 40005, "file is too large"));
             }
             let token = auth::new_token();
-            sqlx::query("INSERT INTO pending_uploads (token, channel_id, user_id, filename, content_type, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+            sqlx::query(&crate::db::sql("INSERT INTO pending_uploads (token, channel_id, user_id, filename, content_type, size, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"))
                 .bind(&token)
                 .bind(&channel_id)
                 .bind(&user.id)
@@ -330,9 +332,9 @@ async fn receive_upload(
     Path(token): Path<String>,
     req: axum::extract::Request,
 ) -> Response {
-    let row: Option<(String, String, i64, i64)> = match sqlx::query_as(
+    let row: Option<(String, String, i64, i64)> = match sqlx::query_as(&crate::db::sql(
         "SELECT channel_id, filename, size, uploaded FROM pending_uploads WHERE token = ?",
-    )
+    ))
     .bind(&token)
     .fetch_optional(&state.db)
     .await
@@ -371,11 +373,13 @@ async fn receive_upload(
     if let Err(e) = tokio::fs::write(&full, &bytes).await {
         return crate::api::internal(e);
     }
-    if let Err(e) = sqlx::query("UPDATE pending_uploads SET path = ?, uploaded = 1 WHERE token = ?")
-        .bind(&rel)
-        .bind(&token)
-        .execute(&state.db)
-        .await
+    if let Err(e) = sqlx::query(&crate::db::sql(
+        "UPDATE pending_uploads SET path = ?, uploaded = 1 WHERE token = ?",
+    ))
+    .bind(&rel)
+    .bind(&token)
+    .execute(&state.db)
+    .await
     {
         return crate::api::internal(e);
     }
@@ -407,16 +411,17 @@ pub async fn claim(
     };
     let mut out = Vec::with_capacity(tokens.len());
     for token in tokens {
-        let row: Option<(Option<String>, String, Option<String>, i64)> = sqlx::query_as(
-            "SELECT path, filename, content_type, size FROM pending_uploads \
+        let row: Option<(Option<String>, String, Option<String>, i64)> =
+            sqlx::query_as(&crate::db::sql(
+                "SELECT path, filename, content_type, size FROM pending_uploads \
              WHERE token = ? AND channel_id = ? AND user_id = ? AND uploaded = 1",
-        )
-        .bind(token)
-        .bind(channel_id)
-        .bind(user_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(crate::api::internal)?;
+            ))
+            .bind(token)
+            .bind(channel_id)
+            .bind(user_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(crate::api::internal)?;
         let Some((Some(path), filename, content_type, size)) = row else {
             return Err(bad());
         };
@@ -440,7 +445,7 @@ pub async fn attach_claimed(
 ) -> Result<(), sqlx::Error> {
     let mut tx = state.db.begin().await?;
     for c in claimed {
-        sqlx::query("INSERT INTO attachments (id, message_id, channel_id, filename, content_type, size, path) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query(&crate::db::sql("INSERT INTO attachments (id, message_id, channel_id, filename, content_type, size, path) VALUES (?, ?, ?, ?, ?, ?, ?)"))
             .bind(auth::new_random_numeric_id())
             .bind(message_id)
             .bind(channel_id)
@@ -450,10 +455,12 @@ pub async fn attach_claimed(
             .bind(&c.path)
             .execute(&mut *tx)
             .await?;
-        sqlx::query("DELETE FROM pending_uploads WHERE token = ?")
-            .bind(&c.token)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query(&crate::db::sql(
+            "DELETE FROM pending_uploads WHERE token = ?",
+        ))
+        .bind(&c.token)
+        .execute(&mut *tx)
+        .await?;
     }
     tx.commit().await
 }

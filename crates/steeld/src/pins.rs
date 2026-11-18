@@ -55,12 +55,13 @@ async fn may_pin(state: &AppState, channel: &chat::ChannelRow, user_id: &str) ->
 }
 
 async fn publish_pins(state: &AppState, channel: &chat::ChannelRow) -> ApiResult<()> {
-    let last: Option<(Option<String>,)> =
-        sqlx::query_as("SELECT MAX(pinned_at) FROM pins WHERE channel_id = ?")
-            .bind(&channel.id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(db)?;
+    let last: Option<(Option<String>,)> = sqlx::query_as(&crate::db::sql(
+        "SELECT MAX(pinned_at) FROM pins WHERE channel_id = ?",
+    ))
+    .bind(&channel.id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(db)?;
     let targets = chat::channel_audience(state, channel).await.map_err(db)?;
     state.publish(
         targets,
@@ -84,7 +85,7 @@ async fn pin(
         let channel = chat::channel_row(&state, &channel_id).await?;
         chat::require_channel(&state, &channel, &user.id).await?;
         may_pin(&state, &channel, &user.id).await?;
-        let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM messages WHERE id = ? AND channel_id = ?")
+        let exists: Option<(i64,)> = sqlx::query_as(&crate::db::sql("SELECT 1 FROM messages WHERE id = ? AND channel_id = ?"))
             .bind(&message_id)
             .bind(&channel_id)
             .fetch_optional(&state.db)
@@ -93,12 +94,12 @@ async fn pin(
         if exists.is_none() {
             return Err(chat::missing_message());
         }
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pins WHERE channel_id = ?")
+        let count: i64 = sqlx::query_scalar(&crate::db::sql("SELECT COUNT(*) FROM pins WHERE channel_id = ?"))
             .bind(&channel_id)
             .fetch_one(&state.db)
             .await
             .map_err(db)?;
-        let already: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM pins WHERE channel_id = ? AND message_id = ?")
+        let already: Option<(i64,)> = sqlx::query_as(&crate::db::sql("SELECT 1 FROM pins WHERE channel_id = ? AND message_id = ?"))
             .bind(&channel_id)
             .bind(&message_id)
             .fetch_optional(&state.db)
@@ -107,7 +108,7 @@ async fn pin(
         if already.is_none() && count >= MAX_PINS {
             return Err(api_error(StatusCode::BAD_REQUEST, 30003, "maximum number of pinned messages reached"));
         }
-        sqlx::query("INSERT OR IGNORE INTO pins (channel_id, message_id, pinned_at, pinned_by) VALUES (?, ?, ?, ?)")
+        sqlx::query(&crate::db::sql("INSERT OR IGNORE INTO pins (channel_id, message_id, pinned_at, pinned_by) VALUES (?, ?, ?, ?)"))
             .bind(&channel_id)
             .bind(&message_id)
             .bind(chrono::Utc::now().to_rfc3339())
@@ -132,12 +133,14 @@ async fn unpin(
         let channel = chat::channel_row(&state, &channel_id).await?;
         chat::require_channel(&state, &channel, &user.id).await?;
         may_pin(&state, &channel, &user.id).await?;
-        sqlx::query("DELETE FROM pins WHERE channel_id = ? AND message_id = ?")
-            .bind(&channel_id)
-            .bind(&message_id)
-            .execute(&state.db)
-            .await
-            .map_err(db)?;
+        sqlx::query(&crate::db::sql(
+            "DELETE FROM pins WHERE channel_id = ? AND message_id = ?",
+        ))
+        .bind(&channel_id)
+        .bind(&message_id)
+        .execute(&state.db)
+        .await
+        .map_err(db)?;
         publish_pins(&state, &channel).await?;
         Ok(StatusCode::NO_CONTENT.into_response())
     }
@@ -178,8 +181,8 @@ async fn list_pins(
         let limit = q.limit.unwrap_or(PAGE_LIMIT).clamp(1, PAGE_LIMIT) as i64;
         let rows: Vec<(String, String)> = match q.before {
             Some(before) => sqlx::query_as(
-                "SELECT pinned_at, message_id FROM pins WHERE channel_id = ? AND pinned_at < ? \
-                 ORDER BY pinned_at DESC, message_id DESC LIMIT ?",
+                &crate::db::sql("SELECT pinned_at, message_id FROM pins WHERE channel_id = ? AND pinned_at < ? \
+                 ORDER BY pinned_at DESC, message_id DESC LIMIT ?"),
             )
             .bind(&channel_id)
             .bind(before)
@@ -188,7 +191,7 @@ async fn list_pins(
             .await
             .map_err(db)?,
             None => sqlx::query_as(
-                "SELECT pinned_at, message_id FROM pins WHERE channel_id = ? ORDER BY pinned_at DESC, message_id DESC LIMIT ?",
+                &crate::db::sql("SELECT pinned_at, message_id FROM pins WHERE channel_id = ? ORDER BY pinned_at DESC, message_id DESC LIMIT ?"),
             )
             .bind(&channel_id)
             .bind(limit + 1)
@@ -200,7 +203,7 @@ async fn list_pins(
         let rows: Vec<(String, String)> = rows.into_iter().take(limit as usize).collect();
         let mut messages = Vec::with_capacity(rows.len());
         for (_, message_id) in &rows {
-            let row: chat::MessageRow = sqlx::query_as(&format!("{MESSAGE_SELECT} WHERE m.id = ?"))
+            let row: chat::MessageRow = sqlx::query_as(&crate::db::sql(&format!("{MESSAGE_SELECT} WHERE m.id = ?")))
                 .bind(message_id)
                 .fetch_one(&state.db)
                 .await

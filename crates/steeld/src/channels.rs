@@ -50,7 +50,7 @@ pub async fn check_parent(state: &AppState, guild_id: &str, parent: &str) -> Api
 /// Overwrites of one channel as clients see them.
 pub async fn overwrites_for(state: &AppState, channel_id: &str) -> Result<Vec<Value>, sqlx::Error> {
     let rows: Vec<(String, i64, String, String)> = sqlx::query_as(
-        "SELECT target_id, target_type, allow, deny FROM overwrites WHERE channel_id = ? ORDER BY target_type, CAST(target_id AS INTEGER)",
+        &crate::db::sql("SELECT target_id, target_type, allow, deny FROM overwrites WHERE channel_id = ? ORDER BY target_type, CAST(target_id AS BIGINT)"),
     )
     .bind(channel_id)
     .fetch_all(&state.db)
@@ -98,13 +98,14 @@ pub async fn write_overwrites(
         match kind {
             0 => {
                 if id != guild_id {
-                    let found: Option<(String,)> =
-                        sqlx::query_as("SELECT id FROM roles WHERE id = ? AND guild_id = ?")
-                            .bind(id)
-                            .bind(guild_id)
-                            .fetch_optional(&state.db)
-                            .await
-                            .map_err(chat::db)?;
+                    let found: Option<(String,)> = sqlx::query_as(&crate::db::sql(
+                        "SELECT id FROM roles WHERE id = ? AND guild_id = ?",
+                    ))
+                    .bind(id)
+                    .bind(guild_id)
+                    .fetch_optional(&state.db)
+                    .await
+                    .map_err(chat::db)?;
                     if found.is_none() {
                         return Err(bad("overwrite role is not in this guild"));
                     }
@@ -120,13 +121,15 @@ pub async fn write_overwrites(
         parsed.push((id.to_string(), kind as i64, allow, deny));
     }
     let mut tx = state.db.begin().await.map_err(chat::db)?;
-    sqlx::query("DELETE FROM overwrites WHERE channel_id = ?")
-        .bind(channel_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(chat::db)?;
+    sqlx::query(&crate::db::sql(
+        "DELETE FROM overwrites WHERE channel_id = ?",
+    ))
+    .bind(channel_id)
+    .execute(&mut *tx)
+    .await
+    .map_err(chat::db)?;
     for (id, kind, allow, deny) in parsed {
-        sqlx::query("INSERT OR REPLACE INTO overwrites (channel_id, target_id, target_type, allow, deny) VALUES (?, ?, ?, ?, ?)")
+        sqlx::query(&crate::db::sql("INSERT OR REPLACE INTO overwrites (channel_id, target_id, target_type, allow, deny) VALUES (?, ?, ?, ?, ?)"))
             .bind(channel_id)
             .bind(id)
             .bind(kind)
@@ -210,9 +213,9 @@ pub async fn patch_channel(
                 .max(0),
         };
 
-        sqlx::query(
+        sqlx::query(&crate::db::sql(
             "UPDATE channels SET name = ?, topic = ?, parent_id = ?, position = ? WHERE id = ?",
-        )
+        ))
         .bind(&name)
         .bind(&topic)
         .bind(&parent_id)
@@ -246,7 +249,7 @@ pub async fn delete_channel(
             .await
             .map_err(chat::db)?;
         // Children of a deleted category stay in the guild, uncategorized (ON DELETE SET NULL).
-        sqlx::query("DELETE FROM channels WHERE id = ?")
+        sqlx::query(&crate::db::sql("DELETE FROM channels WHERE id = ?"))
             .bind(&channel_id)
             .execute(&state.db)
             .await
@@ -278,45 +281,52 @@ pub async fn reorder_channels(
                 .get("id")
                 .and_then(Value::as_str)
                 .ok_or_else(|| bad("each entry needs an id"))?;
-            let row = sqlx::query("SELECT guild_id, kind FROM channels WHERE id = ?")
-                .bind(id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(chat::db)?
-                .ok_or_else(|| api_error(StatusCode::NOT_FOUND, 10003, "Unknown Channel"))?;
+            let row = sqlx::query(&crate::db::sql(
+                "SELECT guild_id, kind FROM channels WHERE id = ?",
+            ))
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(chat::db)?
+            .ok_or_else(|| api_error(StatusCode::NOT_FOUND, 10003, "Unknown Channel"))?;
             let row_guild: Option<String> = row.get("guild_id");
             if row_guild.as_deref() != Some(guild_id.as_str()) {
                 return Err(bad("channel is not in this guild"));
             }
             let kind: i64 = row.get("kind");
             if let Some(position) = entry.get("position").and_then(Value::as_i64) {
-                sqlx::query("UPDATE channels SET position = ? WHERE id = ?")
-                    .bind(position.max(0))
-                    .bind(id)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(chat::db)?;
+                sqlx::query(&crate::db::sql(
+                    "UPDATE channels SET position = ? WHERE id = ?",
+                ))
+                .bind(position.max(0))
+                .bind(id)
+                .execute(&mut *tx)
+                .await
+                .map_err(chat::db)?;
             }
             match nullable_string(entry.get("parent_id"))? {
                 None => {}
                 Some(None) => {
-                    sqlx::query("UPDATE channels SET parent_id = NULL WHERE id = ?")
-                        .bind(id)
-                        .execute(&mut *tx)
-                        .await
-                        .map_err(chat::db)?;
+                    sqlx::query(&crate::db::sql(
+                        "UPDATE channels SET parent_id = NULL WHERE id = ?",
+                    ))
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(chat::db)?;
                 }
                 Some(Some(parent)) => {
                     if kind == channel_type::GUILD_CATEGORY as i64 {
                         return Err(bad("a category cannot have a parent"));
                     }
-                    let parent_row =
-                        sqlx::query("SELECT guild_id, kind FROM channels WHERE id = ?")
-                            .bind(&parent)
-                            .fetch_optional(&mut *tx)
-                            .await
-                            .map_err(chat::db)?
-                            .ok_or_else(|| bad("parent must be a category in this guild"))?;
+                    let parent_row = sqlx::query(&crate::db::sql(
+                        "SELECT guild_id, kind FROM channels WHERE id = ?",
+                    ))
+                    .bind(&parent)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(chat::db)?
+                    .ok_or_else(|| bad("parent must be a category in this guild"))?;
                     let parent_guild: Option<String> = parent_row.get("guild_id");
                     let parent_kind: i64 = parent_row.get("kind");
                     if parent_guild.as_deref() != Some(guild_id.as_str())
@@ -324,12 +334,14 @@ pub async fn reorder_channels(
                     {
                         return Err(bad("parent must be a category in this guild"));
                     }
-                    sqlx::query("UPDATE channels SET parent_id = ? WHERE id = ?")
-                        .bind(&parent)
-                        .bind(id)
-                        .execute(&mut *tx)
-                        .await
-                        .map_err(chat::db)?;
+                    sqlx::query(&crate::db::sql(
+                        "UPDATE channels SET parent_id = ? WHERE id = ?",
+                    ))
+                    .bind(&parent)
+                    .bind(id)
+                    .execute(&mut *tx)
+                    .await
+                    .map_err(chat::db)?;
                 }
             }
             changed.push(id.to_string());
@@ -362,7 +374,7 @@ pub async fn patch_guild(
             Some(Value::String(s)) => chat::check_name(s)?,
             Some(_) => return Err(bad("name must be a string")),
         };
-        sqlx::query("UPDATE guilds SET name = ? WHERE id = ?")
+        sqlx::query(&crate::db::sql("UPDATE guilds SET name = ? WHERE id = ?"))
             .bind(&name)
             .bind(&guild_id)
             .execute(&state.db)
@@ -396,16 +408,17 @@ pub async fn delete_guild(
         let targets = chat::member_ids(&state, &guild_id)
             .await
             .map_err(chat::db)?;
-        let channel_ids: Vec<String> =
-            sqlx::query_scalar("SELECT id FROM channels WHERE guild_id = ?")
-                .bind(&guild_id)
-                .fetch_all(&state.db)
-                .await
-                .map_err(chat::db)?;
+        let channel_ids: Vec<String> = sqlx::query_scalar(&crate::db::sql(
+            "SELECT id FROM channels WHERE guild_id = ?",
+        ))
+        .bind(&guild_id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(chat::db)?;
         uploads::remove_for_channels(&state, &channel_ids)
             .await
             .map_err(chat::db)?;
-        sqlx::query("DELETE FROM guilds WHERE id = ?")
+        sqlx::query(&crate::db::sql("DELETE FROM guilds WHERE id = ?"))
             .bind(&guild_id)
             .execute(&state.db)
             .await
@@ -431,9 +444,9 @@ pub async fn list_guild_invites(
         let user = chat::authed(&state, &headers).await?;
         perms::require_guild(&state, &guild_id, &user.id, MANAGE_GUILD).await?;
         let guild = chat::guild_row(&state, &guild_id).await?;
-        let rows: Vec<(String, String)> = sqlx::query_as(
+        let rows: Vec<(String, String)> = sqlx::query_as(&crate::db::sql(
             "SELECT code, channel_id FROM invites WHERE guild_id = ? ORDER BY created_at DESC",
-        )
+        ))
         .bind(&guild_id)
         .fetch_all(&state.db)
         .await
@@ -463,13 +476,14 @@ pub async fn delete_invite(
 ) -> Response {
     let result: ApiResult<Response> = async {
         let user = chat::authed(&state, &headers).await?;
-        let row =
-            sqlx::query("SELECT guild_id, channel_id, inviter_id FROM invites WHERE code = ?")
-                .bind(&code)
-                .fetch_optional(&state.db)
-                .await
-                .map_err(chat::db)?
-                .ok_or_else(|| api_error(StatusCode::NOT_FOUND, 10006, "Unknown Invite"))?;
+        let row = sqlx::query(&crate::db::sql(
+            "SELECT guild_id, channel_id, inviter_id FROM invites WHERE code = ?",
+        ))
+        .bind(&code)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(chat::db)?
+        .ok_or_else(|| api_error(StatusCode::NOT_FOUND, 10006, "Unknown Invite"))?;
         let guild_id: String = row.get("guild_id");
         let channel_id: String = row.get("channel_id");
         let inviter_id: String = row.get("inviter_id");
@@ -483,7 +497,7 @@ pub async fn delete_invite(
             channel: chat::channel_json(&state, chat::channel_row(&state, &channel_id).await?)
                 .await?,
         };
-        sqlx::query("DELETE FROM invites WHERE code = ?")
+        sqlx::query(&crate::db::sql("DELETE FROM invites WHERE code = ?"))
             .bind(&code)
             .execute(&state.db)
             .await

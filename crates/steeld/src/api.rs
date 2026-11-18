@@ -106,9 +106,9 @@ async fn register(State(state): State<AppState>, Json(req): Json<RegisterRequest
     };
     let id = auth::new_id();
     let now = chrono::Utc::now().to_rfc3339();
-    let inserted = sqlx::query(
+    let inserted = sqlx::query(&crate::db::sql(
         "INSERT INTO users (id, username, email, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
-    )
+    ))
     .bind(&id)
     .bind(&req.username)
     .bind(req.email.as_deref().filter(|e| !e.is_empty()))
@@ -147,9 +147,9 @@ async fn register(State(state): State<AppState>, Json(req): Json<RegisterRequest
 }
 
 async fn login(State(state): State<AppState>, Json(req): Json<LoginRequest>) -> Response {
-    let row: Option<(String, String, String)> = match sqlx::query_as(
+    let row: Option<(String, String, String)> = match sqlx::query_as(&crate::db::sql(
         "SELECT id, username, password_hash FROM users WHERE username = ? OR email = ?",
-    )
+    ))
     .bind(&req.login)
     .bind(&req.login)
     .fetch_optional(&state.db)
@@ -210,9 +210,9 @@ pub async fn user_from_token(state: &AppState, token: &str) -> Result<Option<Use
         .strip_prefix("Bot ")
         .or_else(|| token.strip_prefix("Bearer "))
         .unwrap_or(token);
-    let row: Option<(String, String, bool)> = sqlx::query_as(
-        "SELECT u.id, u.username, EXISTS (SELECT 1 FROM applications a WHERE a.bot_user_id = u.id) \
-         FROM tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?",
+    let row: Option<(String, String, i64)> = sqlx::query_as(
+        &crate::db::sql("SELECT u.id, u.username, CASE WHEN EXISTS (SELECT 1 FROM applications a WHERE a.bot_user_id = u.id) THEN 1 ELSE 0 END \
+         FROM tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ?"),
     )
     .bind(auth::hash_token(token))
     .fetch_optional(&state.db)
@@ -222,17 +222,19 @@ pub async fn user_from_token(state: &AppState, token: &str) -> Result<Option<Use
         username,
         global_name: None,
         avatar: None,
-        bot,
+        bot: bot != 0,
     }))
 }
 
 async fn issue_token(state: &AppState, user_id: &str) -> Result<String, sqlx::Error> {
     let token = auth::new_token();
-    sqlx::query("INSERT INTO tokens (token_hash, user_id, created_at) VALUES (?, ?, ?)")
-        .bind(auth::hash_token(&token))
-        .bind(user_id)
-        .bind(chrono::Utc::now().to_rfc3339())
-        .execute(&state.db)
-        .await?;
+    sqlx::query(&crate::db::sql(
+        "INSERT INTO tokens (token_hash, user_id, created_at) VALUES (?, ?, ?)",
+    ))
+    .bind(auth::hash_token(&token))
+    .bind(user_id)
+    .bind(chrono::Utc::now().to_rfc3339())
+    .execute(&state.db)
+    .await?;
     Ok(token)
 }

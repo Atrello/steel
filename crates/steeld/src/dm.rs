@@ -56,8 +56,8 @@ pub async fn private_channels_for_user(
     user_id: &str,
 ) -> Result<Vec<Channel>, sqlx::Error> {
     let rows: Vec<(String, i64, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT c.id, c.kind, c.name, c.owner_id FROM channels c JOIN channel_recipients r ON r.channel_id = c.id \
-         WHERE r.user_id = ? AND c.guild_id IS NULL ORDER BY CAST(c.id AS INTEGER)",
+        &crate::db::sql("SELECT c.id, c.kind, c.name, c.owner_id FROM channels c JOIN channel_recipients r ON r.channel_id = c.id \
+         WHERE r.user_id = ? AND c.guild_id IS NULL ORDER BY CAST(c.id AS BIGINT)"),
     )
     .bind(user_id)
     .fetch_all(&state.db)
@@ -76,7 +76,7 @@ async fn dm_channel(
     name: Option<String>,
 ) -> Result<Channel, sqlx::Error> {
     let users: Vec<(String, String)> = sqlx::query_as(
-        "SELECT u.id, u.username FROM channel_recipients r JOIN users u ON u.id = r.user_id WHERE r.channel_id = ? ORDER BY CAST(u.id AS INTEGER)",
+        &crate::db::sql("SELECT u.id, u.username FROM channel_recipients r JOIN users u ON u.id = r.user_id WHERE r.channel_id = ? ORDER BY CAST(u.id AS BIGINT)"),
     )
     .bind(&id)
     .fetch_all(&state.db)
@@ -99,7 +99,7 @@ async fn dm_channel(
 
 async fn is_blocked_either_way(state: &AppState, a: &str, b: &str) -> Result<bool, sqlx::Error> {
     let found: Option<(i64,)> = sqlx::query_as(
-        "SELECT 1 FROM relationships WHERE kind = ? AND ((user_id = ? AND target_id = ?) OR (user_id = ? AND target_id = ?))",
+        &crate::db::sql("SELECT 1 FROM relationships WHERE kind = ? AND ((user_id = ? AND target_id = ?) OR (user_id = ? AND target_id = ?))"),
     )
     .bind(relationship_type::BLOCKED as i64)
     .bind(a).bind(b).bind(b).bind(a)
@@ -145,7 +145,7 @@ async fn create_dm(
         }
 
         for other in &others {
-            let exists: Option<(i64,)> = sqlx::query_as("SELECT 1 FROM users WHERE id = ?")
+            let exists: Option<(i64,)> = sqlx::query_as(&crate::db::sql("SELECT 1 FROM users WHERE id = ?"))
                 .bind(other)
                 .fetch_optional(&state.db)
                 .await
@@ -167,10 +167,10 @@ async fn create_dm(
         // Reuse the existing 1:1 DM between the same two people.
         if kind == channel_type::DM {
             let existing: Option<(String,)> = sqlx::query_as(
-                "SELECT c.id FROM channels c \
+                &crate::db::sql("SELECT c.id FROM channels c \
                  JOIN channel_recipients a ON a.channel_id = c.id AND a.user_id = ? \
                  JOIN channel_recipients b ON b.channel_id = c.id AND b.user_id = ? \
-                 WHERE c.guild_id IS NULL AND c.kind = ?",
+                 WHERE c.guild_id IS NULL AND c.kind = ?"),
             )
             .bind(&user.id).bind(&others[0]).bind(channel_type::DM as i64)
             .fetch_optional(&state.db)
@@ -185,11 +185,11 @@ async fn create_dm(
         let channel_id = auth::new_id();
         let now = chrono::Utc::now().to_rfc3339();
         let mut tx = state.db.begin().await.map_err(db)?;
-        sqlx::query("INSERT INTO channels (id, guild_id, kind, name, position, owner_id, created_at) VALUES (?, NULL, ?, ?, 0, ?, ?)")
+        sqlx::query(&crate::db::sql("INSERT INTO channels (id, guild_id, kind, name, position, owner_id, created_at) VALUES (?, NULL, ?, ?, 0, ?, ?)"))
             .bind(&channel_id).bind(kind as i64).bind(&name).bind(&user.id).bind(&now)
             .execute(&mut *tx).await.map_err(db)?;
         for member in std::iter::once(&user.id).chain(others.iter()) {
-            sqlx::query("INSERT INTO channel_recipients (channel_id, user_id) VALUES (?, ?)")
+            sqlx::query(&crate::db::sql("INSERT INTO channel_recipients (channel_id, user_id) VALUES (?, ?)"))
                 .bind(&channel_id).bind(member)
                 .execute(&mut *tx).await.map_err(db)?;
         }
@@ -213,12 +213,13 @@ async fn relationship_kind(
     user: &str,
     target: &str,
 ) -> Result<Option<u8>, sqlx::Error> {
-    let row: Option<(i64,)> =
-        sqlx::query_as("SELECT kind FROM relationships WHERE user_id = ? AND target_id = ?")
-            .bind(user)
-            .bind(target)
-            .fetch_optional(&state.db)
-            .await?;
+    let row: Option<(i64,)> = sqlx::query_as(&crate::db::sql(
+        "SELECT kind FROM relationships WHERE user_id = ? AND target_id = ?",
+    ))
+    .bind(user)
+    .bind(target)
+    .fetch_optional(&state.db)
+    .await?;
     Ok(row.map(|(k,)| k as u8))
 }
 
@@ -234,17 +235,19 @@ async fn set_pair(
     for (from, to, kind) in [(user, target, mine), (target, user, theirs)] {
         match kind {
             Some(k) => {
-                sqlx::query("INSERT INTO relationships (user_id, target_id, kind, created_at) VALUES (?, ?, ?, ?) \
-                             ON CONFLICT(user_id, target_id) DO UPDATE SET kind = excluded.kind")
+                sqlx::query(&crate::db::sql("INSERT INTO relationships (user_id, target_id, kind, created_at) VALUES (?, ?, ?, ?) \
+                             ON CONFLICT(user_id, target_id) DO UPDATE SET kind = excluded.kind"))
                     .bind(from).bind(to).bind(k as i64).bind(&now)
                     .execute(&mut *tx).await?;
             }
             None => {
-                sqlx::query("DELETE FROM relationships WHERE user_id = ? AND target_id = ?")
-                    .bind(from)
-                    .bind(to)
-                    .execute(&mut *tx)
-                    .await?;
+                sqlx::query(&crate::db::sql(
+                    "DELETE FROM relationships WHERE user_id = ? AND target_id = ?",
+                ))
+                .bind(from)
+                .bind(to)
+                .execute(&mut *tx)
+                .await?;
             }
         }
     }
@@ -257,11 +260,12 @@ async fn relationship_view(
     target: &str,
     kind: u8,
 ) -> ApiResult<Relationship> {
-    let row: Option<(String,)> = sqlx::query_as("SELECT username FROM users WHERE id = ?")
-        .bind(target)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(db)?;
+    let row: Option<(String,)> =
+        sqlx::query_as(&crate::db::sql("SELECT username FROM users WHERE id = ?"))
+            .bind(target)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(db)?;
     let (username,) = row.ok_or_else(|| api_error(StatusCode::NOT_FOUND, 10013, "Unknown user"))?;
     let _ = owner;
     Ok(Relationship {
@@ -275,7 +279,7 @@ async fn my_relationships(State(state): State<AppState>, headers: HeaderMap) -> 
     let result: ApiResult<Response> = async {
         let user = authed(&state, &headers).await?;
         let rows: Vec<(String, String, i64)> = sqlx::query_as(
-            "SELECT r.target_id, u.username, r.kind FROM relationships r JOIN users u ON u.id = r.target_id WHERE r.user_id = ?",
+            &crate::db::sql("SELECT r.target_id, u.username, r.kind FROM relationships r JOIN users u ON u.id = r.target_id WHERE r.user_id = ?"),
         )
         .bind(&user.id)
         .fetch_all(&state.db)
@@ -307,12 +311,13 @@ async fn send_friend_request(
 ) -> Response {
     let result: ApiResult<Response> = async {
         let me = authed(&state, &headers).await?;
-        let target: Option<(String, String)> =
-            sqlx::query_as("SELECT id, username FROM users WHERE username = ?")
-                .bind(req.username.trim())
-                .fetch_optional(&state.db)
-                .await
-                .map_err(db)?;
+        let target: Option<(String, String)> = sqlx::query_as(&crate::db::sql(
+            "SELECT id, username FROM users WHERE username = ?",
+        ))
+        .bind(req.username.trim())
+        .fetch_optional(&state.db)
+        .await
+        .map_err(db)?;
         let (target_id, target_name) =
             target.ok_or_else(|| api_error(StatusCode::NOT_FOUND, 10013, "Unknown user"))?;
         if target_id == me.id {
