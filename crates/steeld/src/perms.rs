@@ -168,3 +168,69 @@ pub async fn require_channel_row(
         None => Ok(()),
     }
 }
+
+/// Whether `user_id` owns the guild. Owners pass every hierarchy check.
+pub async fn is_owner(state: &AppState, guild_id: &str, user_id: &str) -> ApiResult<bool> {
+    let owner: Option<(String,)> = sqlx::query_as("SELECT owner_id FROM guilds WHERE id = ?")
+        .bind(guild_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(crate::chat::db)?;
+    Ok(owner.is_some_and(|(id,)| id == user_id))
+}
+
+/// The highest role position a member holds. `@everyone` counts as position 0. The owner
+/// counts as the top of the hierarchy.
+pub async fn top_position(state: &AppState, guild_id: &str, user_id: &str) -> ApiResult<i64> {
+    if is_owner(state, guild_id, user_id).await? {
+        return Ok(i64::MAX);
+    }
+    let top: Option<(Option<i64>,)> = sqlx::query_as(
+        "SELECT MAX(position) FROM roles WHERE guild_id = ? AND (id = ? OR id IN \
+         (SELECT role_id FROM member_roles WHERE guild_id = ? AND user_id = ?))",
+    )
+    .bind(guild_id)
+    .bind(guild_id)
+    .bind(guild_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(crate::chat::db)?;
+    Ok(top.and_then(|(max,)| max).unwrap_or(0))
+}
+
+/// The actor may act on a role only when the role sits below their own top role.
+pub async fn require_above_role(state: &AppState, guild_id: &str, user_id: &str, role_id: &str) -> ApiResult<()> {
+    let top = top_position(state, guild_id, user_id).await?;
+    if top == i64::MAX {
+        return Ok(());
+    }
+    let position: Option<(i64,)> = sqlx::query_as("SELECT position FROM roles WHERE id = ? AND guild_id = ?")
+        .bind(role_id)
+        .bind(guild_id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(crate::chat::db)?;
+    match position {
+        Some((position,)) if position < top => Ok(()),
+        _ => Err(missing()),
+    }
+}
+
+/// The actor may act on a member only when the member's top role sits below their own.
+/// Acting on yourself is always allowed here; callers decide whether the action makes sense.
+pub async fn require_above_member(state: &AppState, guild_id: &str, actor: &str, target: &str) -> ApiResult<()> {
+    if actor == target {
+        return Ok(());
+    }
+    let top = top_position(state, guild_id, actor).await?;
+    if top == i64::MAX {
+        return Ok(());
+    }
+    let target_top = top_position(state, guild_id, target).await?;
+    if target_top < top {
+        Ok(())
+    } else {
+        Err(missing())
+    }
+}

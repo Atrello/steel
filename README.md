@@ -64,6 +64,8 @@ cargo test
 
 The schema is versioned. Migrations live in `crates/steeld/migrations/` as `NNNN_name.sql`, are embedded in the binary, and run once at startup. Each applied migration is recorded in `_sqlx_migrations`, so an existing database upgrades in place.
 
-To change the schema, add the next numbered file (for example `0004_add_thing.sql`). Never edit a migration that has shipped; add a new one instead.
+To change the schema, add the next numbered file. Never edit a migration that has shipped; add a new one instead.
+
+Version numbers are reserved per branch so parallel work does not collide: `0001`–`0003` are the baseline schema, `0004`–`0099` belong to the Steel core, `0100`–`0199` to text features, `0200`–`0299` to voice, and `0300`–`0399` to bots. Gaps are fine, and a lower version merged later still runs once. A database may hold migrations this binary does not ship, which startup tolerates.
 
 Databases created by commits between `136f9a6` and `4f36470` were built with an earlier runner that had no migration record. Recreate those dev databases rather than upgrading them.
