@@ -13,6 +13,8 @@ COPY --from=build /src/target/release/steeld /usr/local/bin/steeld
 ENV STEEL_BIND=0.0.0.0:8080 \
     STEEL_DATA_DIR=/data \
     STEEL_DATABASE_URL=sqlite:////data/steel.db?mode=rwc
+# The data directory must be writable by the non-root user.
+RUN mkdir -p /data && chown 1000:1000 /data
 VOLUME ["/data"]
 EXPOSE 8080
 USER 1000:1000

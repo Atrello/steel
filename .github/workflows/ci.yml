@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: Format, lint and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all
+
+  smoke:
+    name: Smoke tests against a live server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test dependencies
+        run: pip install websockets
+      - name: Build steeld
+        run: cargo build -p steeld
+      - name: Start steeld
+        env:
+          STEEL_BIND: 127.0.0.1:8099
+          STEEL_DATA_DIR: ${{ runner.temp }}/steel-data
+          STEEL_DATABASE_URL: sqlite://${{ runner.temp }}/steel.db?mode=rwc
+        run: |
+          mkdir -p "$STEEL_DATA_DIR"
+          ./target/debug/steeld > "$RUNNER_TEMP/steeld.log" 2>&1 &
+          for i in $(seq 1 30); do
+            curl -fs http://127.0.0.1:8099/healthz && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/steeld.log"
+          exit 1
+      - name: Run smoke scripts
+        run: |
+          set -e
+          for script in smoke_test dm_smoke_test presence_smoke_test upload_smoke_test \
+                        resume_smoke_test staged_upload_smoke_test members_smoke_test; do
+            echo "== $script"
+            timeout 120 python3 scripts/$script.py http://127.0.0.1:8099
+          done
+      - name: Server log
+        if: always()
+        run: |
+          cat "$RUNNER_TEMP/steeld.log" || true
+          if grep -qi panic "$RUNNER_TEMP/steeld.log"; then echo "server panicked"; exit 1; fi
+
+  docker:
+    name: Docker image builds and starts
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -f deploy/Dockerfile -t steel:ci .
+      - name: Start container and check health
+        run: |
+          docker run -d --name steel-ci -p 8080:8080 steel:ci
+          for i in $(seq 1 30); do
+            curl -fs http://127.0.0.1:8080/healthz && break
+            sleep 1
+          done
+          curl -fs http://127.0.0.1:8080/healthz
+          docker logs steel-ci
+          docker rm -f steel-ci
