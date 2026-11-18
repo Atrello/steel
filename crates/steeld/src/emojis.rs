@@ -198,6 +198,7 @@ async fn create(
         .execute(&state.db)
         .await
         .map_err(db)?;
+        crate::audit::record(&state, &guild_id, &user.id, crate::audit::EMOJI_CREATE, Some(&id), serde_json::json!([{"key": "name", "new_value": name}]), None).await.map_err(db)?;
         publish_list(&state, &guild_id).await?;
         Ok((StatusCode::CREATED, Json(emoji_json(&id, &name, i64::from(animated)))).into_response())
     }
@@ -246,6 +247,17 @@ async fn rename(
         .execute(&state.db)
         .await
         .map_err(db)?;
+        crate::audit::record(
+            &state,
+            &guild_id,
+            &user.id,
+            crate::audit::EMOJI_UPDATE,
+            Some(&emoji_id),
+            serde_json::json!([{"key": "name", "new_value": name}]),
+            None,
+        )
+        .await
+        .map_err(db)?;
         publish_list(&state, &guild_id).await?;
         Ok(Json(emoji_json(&emoji_id, &name, animated)).into_response())
     }
@@ -277,6 +289,17 @@ async fn remove(
             .execute(&state.db)
             .await
             .map_err(db)?;
+        crate::audit::record(
+            &state,
+            &guild_id,
+            &user.id,
+            crate::audit::EMOJI_DELETE,
+            Some(&emoji_id),
+            serde_json::json!([]),
+            None,
+        )
+        .await
+        .map_err(db)?;
         let _ = tokio::fs::remove_file(
             uploads::data_dir()
                 .join("emojis")
