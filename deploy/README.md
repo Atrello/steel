@@ -65,8 +65,8 @@ With nginx, add the usual `Upgrade` and `Connection` headers on that location.
 
 ## Data and backups
 
-Everything lives in the `steel-data` Docker volume. Compose prefixes it with the project name, so run `docker volume ls` to find the exact name (usually `deploy_steel-data`): the SQLite database (`steel.db`, with its
-`-wal` and `-shm` files while running) and uploaded files.
+Everything lives in the `steel-data` Docker volume: the SQLite database (`steel.db`, with its
+`-wal` and `-shm` files while running) and uploaded files. Compose prefixes the volume with the project name, so run `docker volume ls` to find the exact name (usually `deploy_steel-data`).
 
 To back up, copy the volume with the server stopped, or use SQLite's online backup:
 
