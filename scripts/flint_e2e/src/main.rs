@@ -1,18 +1,9 @@
 //! Headless end-to-end check: Flint's discord-api and discord-gateway crates against steeld.
-use client_core::{
-    Command, Event,
-    auth::{Failure, SessionSecret},
-};
-use discord_api::{
-    DiscordApi,
-    upload::{Source, Status},
-};
+use client_core::{Command, Event, auth::{Failure, SessionSecret}};
+use discord_api::{DiscordApi, upload::{Source, Status}};
 use model::Id;
 use serde_json::{Value, json};
-use std::{
-    sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::{sync::Arc, time::{Duration, SystemTime, UNIX_EPOCH}};
 use tokio::sync::{mpsc, watch};
 
 const SERVER: &str = "http://127.0.0.1:8099";
@@ -47,19 +38,11 @@ async fn rest(method: &str, token: &str, path: &str, body: Option<Value>) -> (u1
     (status, value)
 }
 
-fn start_gateway(
-    secret: Arc<SessionSecret>,
-) -> (
-    Rx,
-    tokio::task::JoinHandle<Result<(), Failure>>,
-    watch::Sender<Option<discord_gateway::MemberSubscription>>,
-) {
+fn start_gateway(secret: Arc<SessionSecret>) -> (Rx, tokio::task::JoinHandle<Result<(), Failure>>, watch::Sender<Option<discord_gateway::MemberSubscription>>) {
     let (ev_tx, ev_rx) = mpsc::unbounded_channel::<Event>();
     let (sub_tx, sub_rx) = watch::channel::<Option<discord_gateway::MemberSubscription>>(None);
     let url = model::endpoints::get().gateway_url.clone();
-    let emit = move |event: Event| -> Result<(), Failure> {
-        ev_tx.send(event).map_err(|_| Failure::Protocol)
-    };
+    let emit = move |event: Event| -> Result<(), Failure> { ev_tx.send(event).map_err(|_| Failure::Protocol) };
     let handle = tokio::spawn(async move { discord_gateway::run(secret, url, sub_rx, emit).await });
     (ev_rx, handle, sub_tx)
 }
@@ -86,26 +69,14 @@ async fn admin(api: &DiscordApi, guild: Id, action: model::server_admin::Action,
 #[tokio::main]
 async fn main() {
     model::endpoints::configure(SERVER).expect("configure server");
-    let tag = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs()
-        % 100_000_000;
+    let tag = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() % 100_000_000;
     let alice_name = format!("e2ea{tag}");
     let bob_name = format!("e2eb{tag}");
     let password = "correct-horse-battery-1";
 
     step("register alice and bob through discord_api::auth");
-    let alice = Arc::new(
-        discord_api::auth::register(&alice_name, password, None)
-            .await
-            .expect("register alice"),
-    );
-    let bob = Arc::new(
-        discord_api::auth::register(&bob_name, password, None)
-            .await
-            .expect("register bob"),
-    );
+    let alice = Arc::new(discord_api::auth::register(&alice_name, password, None).await.expect("register alice"));
+    let bob = Arc::new(discord_api::auth::register(&bob_name, password, None).await.expect("register bob"));
     let alice_token = alice.expose().to_owned();
     let bob_token = bob.expose().to_owned();
     step("PASS register");
@@ -113,62 +84,26 @@ async fn main() {
     step("connect both gateways, wait for READY");
     let (mut alice_rx, alice_gw, _alice_sub) = start_gateway(alice.clone());
     let (mut bob_rx, bob_gw, _bob_sub) = start_gateway(bob.clone());
-    wait_for(&mut alice_rx, "alice READY", |e| {
-        matches!(e, Event::Startup(_)).then_some(())
-    })
-    .await;
-    wait_for(&mut bob_rx, "bob READY", |e| {
-        matches!(e, Event::Startup(_)).then_some(())
-    })
-    .await;
-    assert!(
-        !alice_gw.is_finished() && !bob_gw.is_finished(),
-        "gateway task ended early"
-    );
+    wait_for(&mut alice_rx, "alice READY", |e| matches!(e, Event::Startup(_)).then_some(())).await;
+    wait_for(&mut bob_rx, "bob READY", |e| matches!(e, Event::Startup(_)).then_some(())).await;
+    assert!(!alice_gw.is_finished() && !bob_gw.is_finished(), "gateway task ended early");
     step("PASS READY on both");
 
     step("alice creates a guild and an invite; bob accepts");
-    let (st, guild) = rest(
-        "POST",
-        &alice_token,
-        "/guilds",
-        Some(json!({"name": "E2E guild"})),
-    )
-    .await;
+    let (st, guild) = rest("POST", &alice_token, "/guilds", Some(json!({"name": "E2E guild"}))).await;
     assert!(st / 100 == 2, "create guild: {guild}");
     let guild_id = guild["id"].as_str().expect("guild id").to_owned();
     step("alice's gateway receives GUILD_CREATE (GuildJoined) for the new guild");
     let joined = wait_for(&mut alice_rx, "alice GuildJoined", |e| match e {
         Event::GuildJoined(g) if g.id.0.to_string() == guild_id => Some(()),
         _ => None,
-    })
-    .await;
+    }).await;
     let _ = joined;
     step("PASS GuildJoined on creator");
-    let (st, channels) = rest(
-        "GET",
-        &alice_token,
-        &format!("/guilds/{guild_id}/channels"),
-        None,
-    )
-    .await;
+    let (st, channels) = rest("GET", &alice_token, &format!("/guilds/{guild_id}/channels"), None).await;
     assert!(st / 100 == 2, "list channels: {channels}");
-    let general = channels
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|c| c["type"] == 0)
-        .expect("text channel")["id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    let (st, invite) = rest(
-        "POST",
-        &alice_token,
-        &format!("/channels/{general}/invites"),
-        Some(json!({})),
-    )
-    .await;
+    let general = channels.as_array().unwrap().iter().find(|c| c["type"] == 0).expect("text channel")["id"].as_str().unwrap().to_owned();
+    let (st, invite) = rest("POST", &alice_token, &format!("/channels/{general}/invites"), Some(json!({}))).await;
     assert!(st / 100 == 2, "create invite: {invite}");
     let code = invite["code"].as_str().expect("invite code").to_owned();
     let (st, joined) = rest("POST", &bob_token, &format!("/invites/{code}"), None).await;
@@ -181,13 +116,7 @@ async fn main() {
     step("alice sends text through Flint DiscordApi; bob must receive MESSAGE_CREATE");
     let text = format!("hello bob {tag}");
     let sent = api_alice
-        .execute(Command::Send {
-            sticker: None,
-            channel,
-            content: text.clone(),
-            nonce: "e2e-text".into(),
-            reply: None,
-        })
+        .execute(Command::Send { sticker: None, channel, content: text.clone(), nonce: "e2e-text".into(), reply: None })
         .await;
     match sent {
         Event::SendResult { result: Ok(_), .. } => {}
@@ -204,22 +133,10 @@ async fn main() {
     let api_bob = DiscordApi::new(bob.clone()).expect("bob api");
     let reply_text = format!("hi alice {tag}");
     let sent = api_bob
-        .execute(Command::Send {
-            sticker: None,
-            channel,
-            content: reply_text.clone(),
-            nonce: "e2e-reply".into(),
-            reply: None,
-        })
+        .execute(Command::Send { sticker: None, channel, content: reply_text.clone(), nonce: "e2e-reply".into(), reply: None })
         .await;
-    assert!(
-        matches!(sent, Event::SendResult { result: Ok(_), .. }),
-        "bob send failed"
-    );
-    wait_for(&mut alice_rx, "alice MESSAGE_CREATE", |e| {
-        matches!(e, Event::Message(m) if m.content == reply_text).then_some(())
-    })
-    .await;
+    assert!(matches!(sent, Event::SendResult { result: Ok(_), .. }), "bob send failed");
+    wait_for(&mut alice_rx, "alice MESSAGE_CREATE", |e| matches!(e, Event::Message(m) if m.content == reply_text).then_some(())).await;
     step("PASS reply delivered both ways");
 
     step("alice uploads a file through Flint's signed upload path; bob must get the attachment");
@@ -229,18 +146,7 @@ async fn main() {
     let (_cancel_tx, cancel_rx) = watch::channel(false);
     let upload_text = format!("with file {tag}");
     let event = api_alice
-        .upload_message(
-            Command::Send {
-                sticker: None,
-                channel,
-                content: upload_text.clone(),
-                nonce: "e2e-upload".into(),
-                reply: None,
-            },
-            source,
-            progress_tx,
-            cancel_rx,
-        )
+        .upload_message(Command::Send { sticker: None, channel, content: upload_text.clone(), nonce: "e2e-upload".into(), reply: None }, source, progress_tx, cancel_rx)
         .await;
     let sent_attachments = match event {
         Event::SendResult { result: Ok(m), .. } => m.attachments.len(),
@@ -248,58 +154,22 @@ async fn main() {
         _ => panic!("unexpected upload event"),
     };
     assert_eq!(sent_attachments, 1, "alice's upload returned attachments");
-    let (st, listed) = rest(
-        "GET",
-        &bob_token,
-        &format!("/channels/{general}/messages?limit=5"),
-        None,
-    )
-    .await;
+    let (st, listed) = rest("GET", &bob_token, &format!("/channels/{general}/messages?limit=5"), None).await;
     assert!(st / 100 == 2, "bob lists messages: {listed}");
-    let found = listed
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["content"] == upload_text)
-        .expect("uploaded message visible to bob");
-    let url = model::endpoints::absolute_url(
-        found["attachments"][0]["url"]
-            .as_str()
-            .expect("attachment url"),
-    );
-    wait_for(&mut bob_rx, "bob MESSAGE_CREATE with attachment", |e| {
-        matches!(e, Event::Message(m) if m.content == upload_text && m.attachments.len() == 1)
-            .then_some(())
-    })
-    .await;
-    let fetched = wreq::Client::new()
-        .get(url.clone())
-        .send()
-        .await
-        .expect("fetch cdn");
-    assert!(
-        fetched.status().is_success(),
-        "cdn fetch {url}: {}",
-        fetched.status()
-    );
+    let found = listed.as_array().unwrap().iter().find(|m| m["content"] == upload_text).expect("uploaded message visible to bob");
+    let url = model::endpoints::absolute_url(found["attachments"][0]["url"].as_str().expect("attachment url"));
+    wait_for(&mut bob_rx, "bob MESSAGE_CREATE with attachment", |e| matches!(e, Event::Message(m) if m.content == upload_text && m.attachments.len() == 1).then_some(())).await;
+    let fetched = wreq::Client::new().get(url.clone()).send().await.expect("fetch cdn");
+    assert!(fetched.status().is_success(), "cdn fetch {url}: {}", fetched.status());
     let bytes = fetched.bytes().await.expect("cdn bytes");
-    assert_eq!(
-        bytes.as_ref(),
-        body.as_slice(),
-        "downloaded bytes match upload"
-    );
+    assert_eq!(bytes.as_ref(), body.as_slice(), "downloaded bytes match upload");
     step("PASS upload, MESSAGE_CREATE with attachment, CDN bytes match");
 
     // ----- UI flows: channel create, categories, profile, image upload -----
-    let png: Vec<u8> = vec![
-        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
-        0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 100, 96, 248, 95, 15,
-        0, 2, 135, 1, 128, 235, 71, 186, 146, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
-    ];
+    let png: Vec<u8> = vec![137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 100, 96, 248, 95, 15, 0, 2, 135, 1, 128, 235, 71, 186, 146, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130];
 
-    step(
-        "create text, voice, category and a voice channel inside it, through Flint's channel actions",
-    );
+
+    step("create text, voice, category and a voice channel inside it, through Flint's channel actions");
     use client_core::channel_actions::{Action, CreateKind, Outcome};
     let guild_model: Id = guild_id.parse().expect("guild id");
     let mut request = 1u64;
@@ -308,115 +178,40 @@ async fn main() {
         let api = &api_alice;
         let request = request;
         async move {
-            api.execute(Command::ChannelAction {
-                guild: guild_model,
-                channel,
-                request,
-                action,
-            })
-            .await
+            api.execute(Command::ChannelAction { guild: guild_model, channel, request, action }).await
         }
     };
-    let text_event = run_action(
-        channel,
-        Action::Create {
-            name: "e2e-text".into(),
-            kind: CreateKind::Text,
-        },
-    )
-    .await;
+    let text_event = run_action(channel, Action::Create { name: "e2e-text".into(), kind: CreateKind::Text }).await;
     let text_id = match text_event {
-        Event::ChannelAction(client_core::channel_actions::Event::Finished {
-            result: Ok(Outcome::Channel { channel, .. }),
-            ..
-        }) => channel.id,
-        Event::ChannelAction(client_core::channel_actions::Event::Finished {
-            result: Err(e),
-            ..
-        }) => panic!("text channel create failed: {e}"),
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Ok(Outcome::Channel { channel, .. }), .. }) => channel.id,
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Err(e), .. }) => panic!("text channel create failed: {e}"),
         _ => panic!("text channel: unexpected event"),
     };
     let _ = text_id;
     step("PASS text channel create");
 
-    let voice_event = run_action(
-        channel,
-        Action::Create {
-            name: "e2e-voice".into(),
-            kind: CreateKind::Voice,
-        },
-    )
-    .await;
+    let voice_event = run_action(channel, Action::Create { name: "e2e-voice".into(), kind: CreateKind::Voice }).await;
     match voice_event {
-        Event::ChannelAction(client_core::channel_actions::Event::Finished {
-            result: Ok(Outcome::Channel { .. }),
-            ..
-        }) => {}
-        Event::ChannelAction(client_core::channel_actions::Event::Finished {
-            result: Err(e),
-            ..
-        }) => panic!("voice channel create failed: {e}"),
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Ok(Outcome::Channel { .. }), .. }) => {}
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Err(e), .. }) => panic!("voice channel create failed: {e}"),
         _ => panic!("voice channel: unexpected event"),
     }
     step("PASS voice channel create (Flint no longer reports Outcome unknown)");
 
-    let category_event = run_action(
-        channel,
-        Action::CreateCategory {
-            name: "e2e-category".into(),
-        },
-    )
-    .await;
+    let category_event = run_action(channel, Action::CreateCategory { name: "e2e-category".into() }).await;
     let category_id = match category_event {
-        Event::ChannelAction(client_core::channel_actions::Event::Finished {
-            result: Ok(Outcome::Channel { channel, .. }),
-            ..
-        }) => channel.id,
-        Event::ChannelAction(client_core::channel_actions::Event::Finished {
-            result: Err(e),
-            ..
-        }) => panic!("category create failed: {e}"),
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Ok(Outcome::Channel { channel, .. }), .. }) => channel.id,
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Err(e), .. }) => panic!("category create failed: {e}"),
         _ => panic!("category: unexpected event"),
     };
-    let nested = run_action(
-        category_id,
-        Action::Create {
-            name: "e2e-nested".into(),
-            kind: CreateKind::Voice,
-        },
-    )
-    .await;
-    match &nested {
-        Event::ChannelAction(client_core::channel_actions::Event::Finished {
-            result: Ok(_),
-            ..
-        }) => {}
-        Event::ChannelAction(client_core::channel_actions::Event::Finished {
-            result: Err(e),
-            ..
-        }) => panic!("voice channel inside category failed: {e}"),
-        _ => panic!("nested: unexpected event"),
-    }
+    let nested = run_action(category_id, Action::Create { name: "e2e-nested".into(), kind: CreateKind::Voice }).await;
+    match &nested { Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Ok(_), .. }) => {} Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Err(e), .. }) => panic!("voice channel inside category failed: {e}"), _ => panic!("nested: unexpected event") }
     step("PASS category and nested voice channel");
 
-    let (st, listed) = rest(
-        "GET",
-        &alice_token,
-        &format!("/guilds/{guild_id}/channels"),
-        None,
-    )
-    .await;
+    let (st, listed) = rest("GET", &alice_token, &format!("/guilds/{guild_id}/channels"), None).await;
     assert!(st == 200, "list channels: {listed}");
-    let kinds: Vec<i64> = listed
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["type"].as_i64().unwrap())
-        .collect();
-    assert!(
-        kinds.contains(&2) && kinds.contains(&4),
-        "expected voice and category in {kinds:?}"
-    );
+    let kinds: Vec<i64> = listed.as_array().unwrap().iter().map(|c| c["type"].as_i64().unwrap()).collect();
+    assert!(kinds.contains(&2) && kinds.contains(&4), "expected voice and category in {kinds:?}");
     step("PASS channel list shows voice and category types");
 
     step("bob opens alice's profile popout through Flint; it must decode");
@@ -427,13 +222,7 @@ async fn main() {
     };
     let api_bob_profile = DiscordApi::new(bob.clone()).expect("bob api");
     let profile = api_bob_profile
-        .execute(Command::Profile {
-            user: alice_id,
-            guild: None,
-            request: 9,
-            with_mutuals: false,
-            cosmetics: Default::default(),
-        })
+        .execute(Command::Profile { user: alice_id, guild: None, request: 9, with_mutuals: false, cosmetics: Default::default() })
         .await;
     match profile {
         Event::Profile { result: Ok(_), .. } => {}
@@ -448,81 +237,30 @@ async fn main() {
     let image_text = format!("photo {tag}");
     let image_source = Source::pasted_png(png.clone()).expect("png source");
     let image_event = api_alice
-        .upload_message(
-            Command::Send {
-                sticker: None,
-                channel,
-                content: image_text.clone(),
-                nonce: "e2e-photo".into(),
-                reply: None,
-            },
-            image_source,
-            progress_tx2,
-            cancel_rx2,
-        )
+        .upload_message(Command::Send { sticker: None, channel, content: image_text.clone(), nonce: "e2e-photo".into(), reply: None }, image_source, progress_tx2, cancel_rx2)
         .await;
     match image_event {
-        Event::SendResult { result: Ok(m), .. } => {
-            assert_eq!(m.attachments.len(), 1, "photo attachment")
-        }
+        Event::SendResult { result: Ok(m), .. } => assert_eq!(m.attachments.len(), 1, "photo attachment"),
         Event::SendResult { result: Err(e), .. } => panic!("photo upload failed: {e}"),
         _ => panic!("photo upload: unexpected event"),
     }
-    let (st, listed) = rest(
-        "GET",
-        &bob_token,
-        &format!("/channels/{general}/messages?limit=5"),
-        None,
-    )
-    .await;
+    let (st, listed) = rest("GET", &bob_token, &format!("/channels/{general}/messages?limit=5"), None).await;
     assert!(st == 200, "bob lists messages: {listed}");
-    let found = listed
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|m| m["content"] == image_text)
-        .expect("photo message visible");
-    let url =
-        model::endpoints::absolute_url(found["attachments"][0]["url"].as_str().expect("photo url"));
-    let fetched = wreq::Client::new()
-        .get(url.clone())
-        .send()
-        .await
-        .expect("fetch photo");
-    assert!(
-        fetched.status().is_success(),
-        "photo fetch {url}: {}",
-        fetched.status()
-    );
-    assert_eq!(
-        fetched.bytes().await.expect("photo bytes").as_ref(),
-        png.as_slice(),
-        "photo bytes match"
-    );
+    let found = listed.as_array().unwrap().iter().find(|m| m["content"] == image_text).expect("photo message visible");
+    let url = model::endpoints::absolute_url(found["attachments"][0]["url"].as_str().expect("photo url"));
+    let fetched = wreq::Client::new().get(url.clone()).send().await.expect("fetch photo");
+    assert!(fetched.status().is_success(), "photo fetch {url}: {}", fetched.status());
+    assert_eq!(fetched.bytes().await.expect("photo bytes").as_ref(), png.as_slice(), "photo bytes match");
     step("PASS photo upload and download");
 
     // ----- roles and permissions over REST -----
     step("roles: bob cannot create a channel without MANAGE_CHANNELS");
-    let (st, _) = rest(
-        "POST",
-        &bob_token,
-        &format!("/guilds/{guild_id}/channels"),
-        Some(json!({"name": "bob-denied"})),
-    )
-    .await;
+    let (st, _) = rest("POST", &bob_token, &format!("/guilds/{guild_id}/channels"), Some(json!({"name": "bob-denied"}))).await;
     assert_eq!(st, 403, "bob should be denied channel create");
     step("PASS denied");
 
-    step(
-        "roles: alice creates a role with MANAGE_CHANNELS, assigns it to bob, bob can create a channel",
-    );
-    let (st, role) = rest(
-        "POST",
-        &alice_token,
-        &format!("/guilds/{guild_id}/roles"),
-        Some(json!({"name": "mods", "permissions": "16"})),
-    )
-    .await;
+    step("roles: alice creates a role with MANAGE_CHANNELS, assigns it to bob, bob can create a channel");
+    let (st, role) = rest("POST", &alice_token, &format!("/guilds/{guild_id}/roles"), Some(json!({"name": "mods", "permissions": "16"}))).await;
     assert!(st / 100 == 2, "create role: {role}");
     let role_id = role["id"].as_str().expect("role id").to_owned();
     let bob_id = {
@@ -530,132 +268,53 @@ async fn main() {
         assert!(st == 200, "bob me: {me}");
         me["id"].as_str().unwrap().to_owned()
     };
-    let (st, _) = rest(
-        "PUT",
-        &alice_token,
-        &format!("/guilds/{guild_id}/members/{bob_id}/roles/{role_id}"),
-        None,
-    )
-    .await;
+    let (st, _) = rest("PUT", &alice_token, &format!("/guilds/{guild_id}/members/{bob_id}/roles/{role_id}"), None).await;
     assert!(st / 100 == 2, "assign role: {st}");
-    let (st, made) = rest(
-        "POST",
-        &bob_token,
-        &format!("/guilds/{guild_id}/channels"),
-        Some(json!({"name": "bob-made"})),
-    )
-    .await;
-    assert!(
-        st / 100 == 2,
-        "bob with role should create a channel: {made}"
-    );
+    let (st, made) = rest("POST", &bob_token, &format!("/guilds/{guild_id}/channels"), Some(json!({"name": "bob-made"}))).await;
+    assert!(st / 100 == 2, "bob with role should create a channel: {made}");
     step("PASS role assignment grants MANAGE_CHANNELS");
 
-    step(
-        "roles: guild catalog lists @everyone (guild id) and mods; member counts reflect the assignment",
-    );
+    step("roles: guild catalog lists @everyone (guild id) and mods; member counts reflect the assignment");
     let (st, guild_json) = rest("GET", &alice_token, &format!("/guilds/{guild_id}"), None).await;
     assert!(st == 200, "get guild: {guild_json}");
     let roles = guild_json["roles"].as_array().expect("roles array");
-    assert!(
-        roles
-            .iter()
-            .any(|r| r["id"] == guild_id.as_str() && r["name"] == "@everyone"),
-        "@everyone in {roles:?}"
-    );
-    assert!(
-        roles
-            .iter()
-            .any(|r| r["id"] == role_id.as_str() && r["name"] == "mods"),
-        "mods in {roles:?}"
-    );
-    let (st, counts) = rest(
-        "GET",
-        &alice_token,
-        &format!("/guilds/{guild_id}/roles/member-counts"),
-        None,
-    )
-    .await;
+    assert!(roles.iter().any(|r| r["id"] == guild_id.as_str() && r["name"] == "@everyone"), "@everyone in {roles:?}");
+    assert!(roles.iter().any(|r| r["id"] == role_id.as_str() && r["name"] == "mods"), "mods in {roles:?}");
+    let (st, counts) = rest("GET", &alice_token, &format!("/guilds/{guild_id}/roles/member-counts"), None).await;
     assert!(st == 200, "member counts: {counts}");
-    assert_eq!(
-        counts[role_id.as_str()].as_i64(),
-        Some(1),
-        "mods member count"
-    );
+    assert_eq!(counts[role_id.as_str()].as_i64(), Some(1), "mods member count");
     step("PASS catalog and counts");
 
     step("overwrites: deny SEND_MESSAGES for @everyone in general; bob is blocked, alice is not");
     let (st, _) = rest("PATCH", &alice_token, &format!("/channels/{general}"), Some(json!({"permission_overwrites": [{"id": guild_id, "type": 0, "allow": "0", "deny": "2048"}]}))).await;
     assert!(st / 100 == 2, "patch overwrite");
-    let (st, _) = rest(
-        "POST",
-        &bob_token,
-        &format!("/channels/{general}/messages"),
-        Some(json!({"content": "blocked"})),
-    )
-    .await;
+    let (st, _) = rest("POST", &bob_token, &format!("/channels/{general}/messages"), Some(json!({"content": "blocked"}))).await;
     assert_eq!(st, 403, "bob should be blocked by the overwrite");
-    let (st, _) = rest(
-        "POST",
-        &alice_token,
-        &format!("/channels/{general}/messages"),
-        Some(json!({"content": "owner still posts"})),
-    )
-    .await;
+    let (st, _) = rest("POST", &alice_token, &format!("/channels/{general}/messages"), Some(json!({"content": "owner still posts"}))).await;
     assert!(st / 100 == 2, "owner posts");
     step("PASS @everyone deny");
 
     step("overwrites: a member allow for bob lifts the block");
-    let (st, _) = rest(
-        "PATCH",
-        &alice_token,
-        &format!("/channels/{general}"),
-        Some(json!({"permission_overwrites": [
-            {"id": guild_id, "type": 0, "allow": "0", "deny": "2048"},
-            {"id": bob_id, "type": 1, "allow": "2048", "deny": "0"}
-        ]})),
-    )
-    .await;
+    let (st, _) = rest("PATCH", &alice_token, &format!("/channels/{general}"), Some(json!({"permission_overwrites": [
+        {"id": guild_id, "type": 0, "allow": "0", "deny": "2048"},
+        {"id": bob_id, "type": 1, "allow": "2048", "deny": "0"}
+    ]}))).await;
     assert!(st / 100 == 2, "patch member overwrite");
-    let (st, _) = rest(
-        "POST",
-        &bob_token,
-        &format!("/channels/{general}/messages"),
-        Some(json!({"content": "allowed"})),
-    )
-    .await;
+    let (st, _) = rest("POST", &bob_token, &format!("/channels/{general}/messages"), Some(json!({"content": "allowed"}))).await;
     assert!(st / 100 == 2, "bob allowed by member overwrite: {st}");
     step("PASS member allow overrides @everyone deny");
 
     step("roles: removing the role takes MANAGE_CHANNELS away again");
-    let (st, _) = rest(
-        "DELETE",
-        &alice_token,
-        &format!("/guilds/{guild_id}/members/{bob_id}/roles/{role_id}"),
-        None,
-    )
-    .await;
+    let (st, _) = rest("DELETE", &alice_token, &format!("/guilds/{guild_id}/members/{bob_id}/roles/{role_id}"), None).await;
     assert!(st / 100 == 2, "remove role");
-    let (st, _) = rest(
-        "POST",
-        &bob_token,
-        &format!("/guilds/{guild_id}/channels"),
-        Some(json!({"name": "bob-again"})),
-    )
-    .await;
+    let (st, _) = rest("POST", &bob_token, &format!("/guilds/{guild_id}/channels"), Some(json!({"name": "bob-again"}))).await;
     assert_eq!(st, 403, "bob should lose channel create");
     step("PASS role removal revokes");
 
     step("roles: non-owners cannot delete the guild, and @everyone cannot be deleted");
     let (st, _) = rest("DELETE", &bob_token, &format!("/guilds/{guild_id}"), None).await;
     assert_eq!(st, 403, "bob cannot delete the guild");
-    let (st, _) = rest(
-        "DELETE",
-        &alice_token,
-        &format!("/guilds/{guild_id}/roles/{guild_id}"),
-        None,
-    )
-    .await;
+    let (st, _) = rest("DELETE", &alice_token, &format!("/guilds/{guild_id}/roles/{guild_id}"), None).await;
     assert_eq!(st, 400, "@everyone cannot be deleted");
     step("PASS guard rails");
 
