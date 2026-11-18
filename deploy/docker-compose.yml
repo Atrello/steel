@@ -1,0 +1,16 @@
+services:
+  steel:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: steel:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    env_file:
+      - steel.env
+    volumes:
+      - steel-data:/data
+
+volumes:
+  steel-data:
