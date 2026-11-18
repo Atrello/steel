@@ -1,0 +1,19 @@
+# Headless end-to-end check of steeld against Flint's discord-api and discord-gateway crates.
+# Expects a Flint checkout at ../../../flint (i.e. a sibling of the steel checkout's parent dir).
+# Not a member of the steel workspace; build it on its own with `cargo build` in this directory.
+[package]
+name = "flint-e2e"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+client-core = { path = "../../../flint/crates/client-core" }
+discord-api = { path = "../../../flint/crates/discord-api" }
+discord-gateway = { path = "../../../flint/crates/discord-gateway" }
+model = { path = "../../../flint/crates/model" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+serde_json = "1"
+wreq = { version = "=6.0.0-rc.31", features = ["json"] }

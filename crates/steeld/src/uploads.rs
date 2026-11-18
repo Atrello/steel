@@ -25,7 +25,7 @@ pub fn max_file_bytes() -> u64 {
     std::env::var("STEEL_MAX_UPLOAD_BYTES")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(8 * 1024 * 1024)
+        .unwrap_or(100 * 1024 * 1024)
 }
 
 /// Files per message.
@@ -177,6 +177,28 @@ pub async fn remove_for_message(state: &AppState, message_id: &str) -> Result<()
     Ok(())
 }
 
+/// Removes stored files for every attachment in these channels, before the rows cascade away.
+pub async fn remove_for_channels(
+    state: &AppState,
+    channel_ids: &[String],
+) -> Result<(), sqlx::Error> {
+    for channel_id in channel_ids {
+        let paths: Vec<(String,)> =
+            sqlx::query_as("SELECT path FROM attachments WHERE channel_id = ?")
+                .bind(channel_id)
+                .fetch_all(&state.db)
+                .await?;
+        for (rel,) in paths {
+            let full = data_dir().join(&rel);
+            let _ = tokio::fs::remove_file(&full).await;
+            if let Some(parent) = full.parent() {
+                let _ = tokio::fs::remove_dir(parent).await;
+            }
+        }
+    }
+    Ok(())
+}
+
 async fn serve_attachment(
     State(state): State<AppState>,
     Path((channel_id, attachment_id, filename)): Path<(String, String, String)>,
@@ -231,17 +253,30 @@ pub fn routes() -> Router<AppState> {
         .route("/cdn/upload/{token}", put(receive_upload))
 }
 
-/// Base URL for links handed to clients: STEEL_PUBLIC_URL, or the request's Host header.
+/// Base URL for links handed to clients: STEEL_PUBLIC_URL when set, otherwise the request's
+/// scheme and host. Reverse proxies announce the public scheme and host through the
+/// `X-Forwarded-Proto` and `X-Forwarded-Host` headers, which are honored first.
 fn base_for(headers: &HeaderMap) -> String {
     let configured = public_base();
     if !configured.is_empty() {
         return configured;
     }
-    let host = headers
-        .get(header::HOST)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("localhost");
-    format!("http://{host}")
+    let first = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').next())
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    let scheme = match first("x-forwarded-proto").as_deref() {
+        Some("https") => "https",
+        _ => "http",
+    };
+    let host = first("x-forwarded-host")
+        .or_else(|| first(header::HOST.as_str()))
+        .unwrap_or_else(|| "localhost".to_string());
+    format!("{scheme}://{host}")
 }
 
 /// `POST /channels/{id}/attachments`: reserve upload slots for files about to be sent.

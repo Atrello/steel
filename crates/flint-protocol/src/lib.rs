@@ -131,6 +131,8 @@ pub mod channel_type {
     pub const GUILD_TEXT: u8 = 0;
     pub const DM: u8 = 1;
     pub const GROUP_DM: u8 = 3;
+    pub const GUILD_VOICE: u8 = 2;
+    pub const GUILD_CATEGORY: u8 = 4;
 }
 
 /// Relationship kinds, as in Discord's relationship API.
@@ -154,6 +156,13 @@ pub struct Channel {
     pub position: i64,
     #[serde(default)]
     pub topic: Option<String>,
+    /// Category this channel sits under; null for categories and uncategorized channels.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// Permission overwrites. Steel has no per-channel overwrites yet, so this stays empty;
+    /// clients read it to copy a category's overwrites onto a new child channel.
+    #[serde(default)]
+    pub permission_overwrites: Vec<serde_json::Value>,
     /// Participants of a DM or group DM. Empty for guild channels.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recipients: Vec<User>,
@@ -195,6 +204,11 @@ pub struct Guild {
     pub owner_id: String,
     #[serde(default)]
     pub channels: Vec<Channel>,
+    /// Roles, lowest position first. The `@everyone` role has the guild's id.
+    #[serde(default)]
+    pub roles: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub features: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -218,6 +232,21 @@ pub struct Attachment {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReactionEmoji {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Reaction {
+    pub emoji: ReactionEmoji,
+    pub count: u32,
+    pub me: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Message {
     pub id: String,
     pub channel_id: String,
@@ -232,6 +261,8 @@ pub struct Message {
     pub kind: u8,
     #[serde(default)]
     pub attachments: Vec<Attachment>,
+    #[serde(default)]
+    pub reactions: Vec<Reaction>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -246,6 +277,10 @@ pub struct CreateChannel {
     pub kind: Option<u8>,
     #[serde(default)]
     pub topic: Option<String>,
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    #[serde(default)]
+    pub permission_overwrites: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
