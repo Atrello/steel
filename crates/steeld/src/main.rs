@@ -22,6 +22,7 @@ mod reactions;
 mod roles;
 mod search;
 mod session;
+mod settings;
 mod state;
 mod threads;
 mod uploads;
