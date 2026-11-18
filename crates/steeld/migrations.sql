@@ -23,6 +23,14 @@ CREATE TABLE IF NOT EXISTS guild_members (
     guild_id  TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
     user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     joined_at TEXT NOT NULL,
+    nick      TEXT,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS guild_bans (
+    guild_id   TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL,
     PRIMARY KEY (guild_id, user_id)
 );
 

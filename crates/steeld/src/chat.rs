@@ -29,7 +29,7 @@ const MAX_NAME: usize = 100;
 const DEFAULT_LIMIT: u32 = 50;
 const MAX_LIMIT: u32 = 100;
 
-type ApiResult<T> = Result<T, Response>;
+pub type ApiResult<T> = Result<T, Response>;
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -71,20 +71,20 @@ pub fn routes() -> Router<AppState> {
 // ---------------------------------------------------------------------------
 
 #[derive(sqlx::FromRow)]
-struct GuildRow {
-    id: String,
-    name: String,
-    owner_id: String,
+pub struct GuildRow {
+    pub id: String,
+    pub name: String,
+    pub owner_id: String,
 }
 
 #[derive(sqlx::FromRow)]
 pub struct ChannelRow {
-    id: String,
-    guild_id: Option<String>,
-    kind: i64,
-    name: Option<String>,
-    topic: Option<String>,
-    position: i64,
+    pub id: String,
+    pub guild_id: Option<String>,
+    pub kind: i64,
+    pub name: Option<String>,
+    pub topic: Option<String>,
+    pub position: i64,
 }
 
 #[derive(sqlx::FromRow)]
@@ -111,6 +111,14 @@ fn internal(err: impl std::fmt::Display) -> Response {
 
 fn db(err: sqlx::Error) -> Response {
     internal(err)
+}
+
+pub fn missing_channel() -> Response {
+    missing("channel")
+}
+
+pub fn missing_member() -> Response {
+    api_error(StatusCode::NOT_FOUND, 10007, "Unknown Member")
 }
 
 fn missing(what: &str) -> Response {
@@ -180,7 +188,7 @@ pub async fn channel_audience(
     }
 }
 
-async fn require_member(state: &AppState, guild_id: &str, user_id: &str) -> ApiResult<()> {
+pub async fn require_member(state: &AppState, guild_id: &str, user_id: &str) -> ApiResult<()> {
     let found: Option<(i64,)> =
         sqlx::query_as("SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?")
             .bind(guild_id)
@@ -191,7 +199,7 @@ async fn require_member(state: &AppState, guild_id: &str, user_id: &str) -> ApiR
     found.map(|_| ()).ok_or_else(no_access)
 }
 
-async fn guild_row(state: &AppState, guild_id: &str) -> ApiResult<GuildRow> {
+pub async fn guild_row(state: &AppState, guild_id: &str) -> ApiResult<GuildRow> {
     sqlx::query_as("SELECT id, name, owner_id FROM guilds WHERE id = ?")
         .bind(guild_id)
         .fetch_optional(&state.db)
@@ -272,7 +280,7 @@ fn guild_channel(row: ChannelRow) -> Channel {
     }
 }
 
-async fn guild_channels(state: &AppState, guild_id: &str) -> ApiResult<Vec<Channel>> {
+pub async fn guild_channels(state: &AppState, guild_id: &str) -> ApiResult<Vec<Channel>> {
     Ok(guild_channel_rows(state, guild_id)
         .await
         .map_err(db)?
@@ -295,7 +303,7 @@ async fn guild_json(state: &AppState, row: GuildRow, with_channels: bool) -> Api
     })
 }
 
-async fn member_ids(state: &AppState, guild_id: &str) -> Result<Vec<String>, sqlx::Error> {
+pub async fn member_ids(state: &AppState, guild_id: &str) -> Result<Vec<String>, sqlx::Error> {
     let rows: Vec<(String,)> =
         sqlx::query_as("SELECT user_id FROM guild_members WHERE guild_id = ?")
             .bind(guild_id)
@@ -899,6 +907,16 @@ async fn accept_invite(
     let result: ApiResult<Response> = async {
         let user = authed(&state, &headers).await?;
         let (guild_id, _channel_id) = invite_row(&state, &code).await?;
+        let banned: Option<(i64,)> =
+            sqlx::query_as("SELECT 1 FROM guild_bans WHERE guild_id = ? AND user_id = ?")
+                .bind(&guild_id)
+                .bind(&user.id)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(db)?;
+        if banned.is_some() {
+            return Err(no_access());
+        }
         sqlx::query(
             "INSERT OR IGNORE INTO guild_members (guild_id, user_id, joined_at) VALUES (?, ?, ?)",
         )
