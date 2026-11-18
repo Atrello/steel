@@ -59,3 +59,11 @@ docker compose up -d --build
 ```sh
 cargo test
 ```
+
+## Database migrations
+
+The schema is versioned. Migrations live in `crates/steeld/migrations/` as `NNNN_name.sql`, are embedded in the binary, and run once at startup. Each applied migration is recorded in `_sqlx_migrations`, so an existing database upgrades in place.
+
+To change the schema, add the next numbered file (for example `0004_add_thing.sql`). Never edit a migration that has shipped; add a new one instead.
+
+Databases created by commits between `136f9a6` and `4f36470` were built with an earlier runner that had no migration record. Recreate those dev databases rather than upgrading them.
