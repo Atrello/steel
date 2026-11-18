@@ -8,7 +8,8 @@ use axum::{
 use flint_protocol::{ApiError, LoginRequest, RegisterRequest, TokenResponse, User};
 
 use crate::{
-    auth, chat, dm, gateway, members, pins, presence, reactions, search, state::AppState, uploads,
+    auth, chat, dm, gateway, members, pins, polls, presence, reactions, search, state::AppState,
+    uploads,
 };
 
 pub const API_PREFIX: &str = "/api/v10";
@@ -29,6 +30,7 @@ pub fn router(state: AppState) -> Router {
         .merge(members::routes())
         .merge(reactions::routes())
         .merge(pins::routes())
+        .merge(polls::routes())
         .merge(search::routes())
         .merge(crate::profile::routes())
         .layer(axum::extract::DefaultBodyLimit::max(

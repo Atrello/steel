@@ -209,6 +209,7 @@ async fn list_pins(
         }
         crate::uploads::hydrate(&state, &mut messages).await.map_err(db)?;
         crate::reactions::hydrate(&state, &user.id, &mut messages).await.map_err(db)?;
+        crate::polls::hydrate(&state, &user.id, &mut messages).await.map_err(db)?;
         let items = rows
             .into_iter()
             .zip(messages)

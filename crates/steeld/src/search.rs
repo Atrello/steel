@@ -105,6 +105,9 @@ async fn run_search(
     crate::reactions::hydrate(state, me, &mut messages)
         .await
         .map_err(crate::api::internal)?;
+    crate::polls::hydrate(state, me, &mut messages)
+        .await
+        .map_err(crate::api::internal)?;
     Ok(Json(SearchPageOut {
         messages: messages.into_iter().map(|m| vec![m]).collect(),
         total_results: total as u64,

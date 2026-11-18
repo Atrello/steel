@@ -9,6 +9,7 @@ mod events;
 mod gateway;
 mod members;
 mod pins;
+mod polls;
 mod presence;
 mod profile;
 mod reactions;
