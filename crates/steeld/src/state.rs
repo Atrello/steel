@@ -2,13 +2,14 @@ use std::sync::Arc;
 
 use tokio::sync::broadcast;
 
-use crate::{db::Db, events::Dispatch, presence::PresenceTracker};
+use crate::{db::Db, events::Dispatch, presence::PresenceTracker, session::SessionStore};
 
 #[derive(Clone)]
 pub struct AppState {
     pub db: Db,
     pub events: broadcast::Sender<Dispatch>,
     pub presence: Arc<PresenceTracker>,
+    pub sessions: Arc<SessionStore>,
 }
 
 impl AppState {
@@ -18,6 +19,7 @@ impl AppState {
             db,
             events,
             presence: Arc::new(PresenceTracker::default()),
+            sessions: Arc::new(SessionStore::default()),
         }
     }
 

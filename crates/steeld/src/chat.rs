@@ -121,7 +121,7 @@ fn no_access() -> Response {
     api_error(StatusCode::FORBIDDEN, 50001, "Missing Access")
 }
 
-async fn authed(state: &AppState, headers: &HeaderMap) -> ApiResult<User> {
+pub async fn authed(state: &AppState, headers: &HeaderMap) -> ApiResult<User> {
     user_from_headers(state, headers)
         .await
         .map_err(db)?
@@ -602,11 +602,19 @@ async fn send_message(
             (read_json(req).await?, Vec::new())
         };
 
+        // Staged uploads from the signed-upload flow, checked before anything is written.
+        let claimed = if payload.attachments.is_empty() {
+            Vec::new()
+        } else {
+            let tokens: Vec<String> = payload.attachments.iter().map(|a| a.uploaded_filename.clone()).collect();
+            uploads::claim(&state, &channel_id, &user.id, &tokens).await?
+        };
+
         let content = payload.content.trim_end().to_string();
         if content.chars().count() > MAX_CONTENT {
             return Err(api_error(StatusCode::BAD_REQUEST, 50035, format!("content must be at most {MAX_CONTENT} characters")));
         }
-        if content.trim().is_empty() && files.is_empty() {
+        if content.trim().is_empty() && files.is_empty() && claimed.is_empty() {
             return Err(api_error(StatusCode::BAD_REQUEST, 50035, "a message needs content or a file"));
         }
         let reply_to = match payload.message_reference.as_ref().and_then(|r| r.message_id.clone()) {
@@ -625,6 +633,9 @@ async fn send_message(
         sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, reply_to_id, created_at) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(&message_id).bind(&channel_id).bind(&user.id).bind(&content).bind(reply_to).bind(&now)
             .execute(&state.db).await.map_err(db)?;
+        if !claimed.is_empty() {
+            uploads::attach_claimed(&state, &channel_id, &message_id, &claimed).await.map_err(db)?;
+        }
         for file in files {
             if let Err(e) = uploads::store(&state, &channel_id, &message_id, file).await {
                 // Do not leave a half-sent message behind.
@@ -710,6 +721,7 @@ async fn read_multipart(
         payload.unwrap_or(CreateMessage {
             content: String::new(),
             message_reference: None,
+            attachments: Vec::new(),
         }),
         files,
     ))

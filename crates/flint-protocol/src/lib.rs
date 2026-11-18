@@ -92,6 +92,13 @@ pub struct TokenResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResumeData {
+    pub token: String,
+    pub session_id: String,
+    pub seq: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdentifyData {
     pub token: String,
 }
@@ -246,6 +253,47 @@ pub struct CreateMessage {
     pub content: String,
     #[serde(default)]
     pub message_reference: Option<MessageReference>,
+    /// Files staged with `POST /channels/{id}/attachments` and uploaded to their `upload_url`.
+    #[serde(default)]
+    pub attachments: Vec<UploadRef>,
+}
+
+/// Reference to an uploaded file, as sent in a message's `attachments`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UploadRef {
+    #[serde(default)]
+    pub id: serde_json::Value,
+    pub filename: String,
+    pub uploaded_filename: String,
+}
+
+/// Request for upload slots: `POST /channels/{id}/attachments`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StageFiles {
+    pub files: Vec<StageFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StageFile {
+    pub id: serde_json::Value,
+    pub filename: String,
+    pub file_size: u64,
+    #[serde(default)]
+    pub is_clip: bool,
+    #[serde(default)]
+    pub original_content_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StagedUpload {
+    pub id: serde_json::Value,
+    pub upload_url: String,
+    pub upload_filename: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StagedUploads {
+    pub attachments: Vec<StagedUpload>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

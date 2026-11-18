@@ -7,6 +7,7 @@ mod dm;
 mod events;
 mod gateway;
 mod presence;
+mod session;
 mod state;
 mod uploads;
 

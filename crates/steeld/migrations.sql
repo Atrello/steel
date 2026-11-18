@@ -80,6 +80,18 @@ CREATE TABLE IF NOT EXISTS attachments (
 );
 CREATE INDEX IF NOT EXISTS attachments_message_idx ON attachments (message_id);
 
+CREATE TABLE IF NOT EXISTS pending_uploads (
+    token        TEXT PRIMARY KEY,
+    channel_id   TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    user_id      TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    filename     TEXT NOT NULL,
+    content_type TEXT,
+    size         INTEGER NOT NULL,
+    path         TEXT,
+    uploaded     INTEGER NOT NULL DEFAULT 0,
+    created_at   TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS invites (
     code       TEXT PRIMARY KEY,
     guild_id   TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
