@@ -218,6 +218,21 @@ pub struct Attachment {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ReactionEmoji {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Reaction {
+    pub emoji: ReactionEmoji,
+    pub count: u32,
+    pub me: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Message {
     pub id: String,
     pub channel_id: String,
@@ -232,6 +247,8 @@ pub struct Message {
     pub kind: u8,
     #[serde(default)]
     pub attachments: Vec<Attachment>,
+    #[serde(default)]
+    pub reactions: Vec<Reaction>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

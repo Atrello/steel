@@ -117,6 +117,10 @@ pub fn missing_channel() -> Response {
     missing("channel")
 }
 
+pub fn missing_message() -> Response {
+    missing("message")
+}
+
 pub fn missing_member() -> Response {
     api_error(StatusCode::NOT_FOUND, 10007, "Unknown Member")
 }
@@ -359,10 +363,11 @@ pub fn message_json(row: MessageRow) -> Message {
         }),
         kind: 0,
         attachments: Vec::new(),
+        reactions: Vec::new(),
     }
 }
 
-const MESSAGE_SELECT: &str = "SELECT m.id, m.channel_id, m.author_id, u.username, m.content, m.created_at, m.edited_at, \
+pub const MESSAGE_SELECT: &str = "SELECT m.id, m.channel_id, m.author_id, u.username, m.content, m.created_at, m.edited_at, \
      m.reply_to_id, c.guild_id FROM messages m JOIN users u ON u.id = m.author_id JOIN channels c ON c.id = m.channel_id";
 
 pub async fn message_by_id(state: &AppState, message_id: &str) -> ApiResult<MessageRow> {
@@ -583,6 +588,7 @@ async fn list_messages(
         };
         let mut messages: Vec<Message> = rows.into_iter().map(message_json).collect();
         uploads::hydrate(&state, &mut messages).await.map_err(db)?;
+        crate::reactions::hydrate(&state, &user.id, &mut messages).await.map_err(db)?;
         Ok(Json(messages).into_response())
     }
     .await;
@@ -655,6 +661,7 @@ async fn send_message(
 
         let mut out = vec![message_json(message_by_id(&state, &message_id).await?)];
         uploads::hydrate(&state, &mut out).await.map_err(db)?;
+        crate::reactions::hydrate(&state, &user.id, &mut out).await.map_err(db)?;
         let message = out.remove(0);
         let targets = channel_audience(&state, &channel).await.map_err(db)?;
         state.publish(targets, "MESSAGE_CREATE", serde_json::to_value(&message).unwrap_or_default());
@@ -767,6 +774,9 @@ async fn edit_message(
             .map_err(db)?;
         let mut out = vec![message_json(message_by_id(&state, &message_id).await?)];
         uploads::hydrate(&state, &mut out).await.map_err(db)?;
+        crate::reactions::hydrate(&state, &user.id, &mut out)
+            .await
+            .map_err(db)?;
         let message = out.remove(0);
         let channel = channel_row(&state, &channel_id).await?;
         let targets = channel_audience(&state, &channel).await.map_err(db)?;

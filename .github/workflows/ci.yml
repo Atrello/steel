@@ -57,7 +57,7 @@ jobs:
         run: |
           set -e
           for script in smoke_test dm_smoke_test presence_smoke_test upload_smoke_test \
-                        resume_smoke_test staged_upload_smoke_test members_smoke_test; do
+                        resume_smoke_test staged_upload_smoke_test members_smoke_test phase2_smoke_test; do
             echo "== $script"
             timeout 120 python3 scripts/$script.py http://127.0.0.1:8099
           done

@@ -14,7 +14,7 @@ deploy/                 Dockerfile, docker-compose.yml, example env file
 
 ## Status
 
-Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.py`, `scripts/dm_smoke_test.py`, `scripts/presence_smoke_test.py`, `scripts/upload_smoke_test.py`, `scripts/resume_smoke_test.py`, `scripts/staged_upload_smoke_test.py`, `scripts/members_smoke_test.py`. Implemented so far:
+Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.py`, `scripts/dm_smoke_test.py`, `scripts/presence_smoke_test.py`, `scripts/upload_smoke_test.py`, `scripts/resume_smoke_test.py`, `scripts/staged_upload_smoke_test.py`, `scripts/members_smoke_test.py`, `scripts/phase2_smoke_test.py`. Implemented so far:
 
 - Accounts: `POST /api/v10/auth/register`, `POST /api/v10/auth/login`, `GET /api/v10/users/@me`
 - Argon2id password hashes; opaque bearer tokens stored only as SHA-256 hashes
@@ -33,7 +33,11 @@ Phase 1 in progress. Smoke tests against a running server: `scripts/smoke_test.p
 - Guild members: read and edit nickname (`GET`/`PATCH /guilds/{id}/members/{user}`), kick (`DELETE`), ban and unban (`PUT`/`DELETE /guilds/{id}/bans/{user}`). Owner moderates; banned users cannot join with an invite.
 - Read state: `POST /guilds/{id}/ack` and bulk `POST /read-states/ack-bulk`.
 
-Not yet implemented: roles and permissions, mention counts, voice-related member fields (mute, deafen).
+- Reactions: add and remove your own (`PUT`/`DELETE .../reactions/{emoji}/@me`), remove another user's (guild owner), list who reacted, clear all (owner). Messages carry `reactions` with count and `me`. Events: `MESSAGE_REACTION_ADD`, `MESSAGE_REACTION_REMOVE`, `MESSAGE_REACTION_REMOVE_ALL`. Up to 20 distinct emoji per message.
+- Pins: list (`GET .../messages/pins`, paged by `before`), pin and unpin (`PUT`/`DELETE .../messages/pins/{id}`). Guild owner pins in guilds; any DM participant pins in DMs. Up to 50 per channel. Event: `CHANNEL_PINS_UPDATE`.
+- Search: `GET /guilds/{id}/messages/search` and `GET /channels/{id}/messages/search` with `content`, `limit`, `offset`. Case-insensitive substring, newest first.
+
+Not yet implemented: threads, forums, polls, member list, emoji and stickers, profiles and settings, audit log, moderation beyond kick and ban, onboarding, roles and permissions, mention counts, voice-related member fields (mute, deafen).
 
 ## Run locally
 
