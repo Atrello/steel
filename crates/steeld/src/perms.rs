@@ -200,17 +200,23 @@ pub async fn top_position(state: &AppState, guild_id: &str, user_id: &str) -> Ap
 }
 
 /// The actor may act on a role only when the role sits below their own top role.
-pub async fn require_above_role(state: &AppState, guild_id: &str, user_id: &str, role_id: &str) -> ApiResult<()> {
+pub async fn require_above_role(
+    state: &AppState,
+    guild_id: &str,
+    user_id: &str,
+    role_id: &str,
+) -> ApiResult<()> {
     let top = top_position(state, guild_id, user_id).await?;
     if top == i64::MAX {
         return Ok(());
     }
-    let position: Option<(i64,)> = sqlx::query_as("SELECT position FROM roles WHERE id = ? AND guild_id = ?")
-        .bind(role_id)
-        .bind(guild_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(crate::chat::db)?;
+    let position: Option<(i64,)> =
+        sqlx::query_as("SELECT position FROM roles WHERE id = ? AND guild_id = ?")
+            .bind(role_id)
+            .bind(guild_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(crate::chat::db)?;
     match position {
         Some((position,)) if position < top => Ok(()),
         _ => Err(missing()),
@@ -219,7 +225,12 @@ pub async fn require_above_role(state: &AppState, guild_id: &str, user_id: &str,
 
 /// The actor may act on a member only when the member's top role sits below their own.
 /// Acting on yourself is always allowed here; callers decide whether the action makes sense.
-pub async fn require_above_member(state: &AppState, guild_id: &str, actor: &str, target: &str) -> ApiResult<()> {
+pub async fn require_above_member(
+    state: &AppState,
+    guild_id: &str,
+    actor: &str,
+    target: &str,
+) -> ApiResult<()> {
     if actor == target {
         return Ok(());
     }

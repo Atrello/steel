@@ -312,6 +312,32 @@ async fn main() {
     assert_eq!(st, 400, "@everyone cannot be deleted");
     step("PASS guard rails");
 
+    // ----- role hierarchy -----
+    step("hierarchy: bob (MANAGE_ROLES at a middle position) can act only below his top role");
+    let (st, mid) = rest("POST", &alice_token, &format!("/guilds/{guild_id}/roles"), Some(json!({"name": "hier-mid", "permissions": "268435456"}))).await;
+    assert!(st / 100 == 2, "create hier-mid: {mid}");
+    let mid_id = mid["id"].as_str().unwrap().to_owned();
+    let (st, high) = rest("POST", &alice_token, &format!("/guilds/{guild_id}/roles"), Some(json!({"name": "hier-high", "permissions": "0"}))).await;
+    assert!(st / 100 == 2, "create hier-high: {high}");
+    let high_id = high["id"].as_str().unwrap().to_owned();
+    let (st, _) = rest("PUT", &alice_token, &format!("/guilds/{guild_id}/members/{bob_id}/roles/{mid_id}"), None).await;
+    assert!(st / 100 == 2, "give bob hier-mid");
+    let (st, _) = rest("PATCH", &bob_token, &format!("/guilds/{guild_id}/roles/{high_id}"), Some(json!({"name": "stolen"}))).await;
+    assert_eq!(st, 403, "bob must not edit a role above his top role");
+    let (st, _) = rest("PUT", &bob_token, &format!("/guilds/{guild_id}/members/{bob_id}/roles/{high_id}"), None).await;
+    assert_eq!(st, 403, "bob must not hand out a role above his top role");
+    let (st, _) = rest("PUT", &bob_token, &format!("/guilds/{guild_id}/members/{alice_id}/roles/{mid_id}"), None).await;
+    assert_eq!(st, 403, "bob must not change the owner");
+    step("PASS hierarchy blocks edits, grants and changes to the owner");
+
+    step("hierarchy: a non-owner creates a role that sits at the bottom and can then edit it");
+    let (st, own) = rest("POST", &bob_token, &format!("/guilds/{guild_id}/roles"), Some(json!({"name": "bobs-role"}))).await;
+    assert!(st / 100 == 2, "bob creates role: {own}");
+    let own_id = own["id"].as_str().unwrap().to_owned();
+    let (st, _) = rest("PATCH", &bob_token, &format!("/guilds/{guild_id}/roles/{own_id}"), Some(json!({"name": "bobs-renamed"}))).await;
+    assert!(st / 100 == 2, "bob edits his own role: {st}");
+    step("PASS non-owner role creation and edit below the top");
+
     step("ALL CHECKS PASSED");
     std::process::exit(0);
 }
