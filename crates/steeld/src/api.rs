@@ -15,7 +15,7 @@ pub const API_PREFIX: &str = "/api/v10";
 
 pub fn router(state: AppState) -> Router {
     Router::new()
-        .route("/", get(|| async { "Steel. Strike your own spark." }))
+        .route("/", get(root))
         .route("/healthz", get(|| async { "ok" }))
         .route(&format!("{API_PREFIX}/gateway"), get(gateway_info))
         .route(&format!("{API_PREFIX}/auth/register"), post(register))
@@ -64,6 +64,18 @@ fn valid_username(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_alphanumeric() || c == '_' || c == '.' || c == '-')
+}
+
+/// The root path serves a greeting over HTTP and the voice gateway over WebSocket. Flint connects
+/// to `wss://<endpoint>/?v=8`, so the voice socket shares this path.
+async fn root(
+    State(state): State<AppState>,
+    ws: Result<WebSocketUpgrade, axum::extract::ws::rejection::WebSocketUpgradeRejection>,
+) -> Response {
+    match ws {
+        Ok(ws) => ws.on_upgrade(move |socket| crate::voice::run_ws(state, socket)),
+        Err(_) => "Steel. Strike your own spark.".into_response(),
+    }
 }
 
 async fn gateway_info() -> Json<serde_json::Value> {
