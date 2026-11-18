@@ -3,6 +3,7 @@ mod api;
 mod audit;
 mod auth;
 mod bots;
+mod calls;
 mod channels;
 mod chat;
 mod db;

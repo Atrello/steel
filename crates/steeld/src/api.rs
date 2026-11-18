@@ -44,6 +44,7 @@ pub fn router(state: AppState) -> Router {
         .merge(crate::profile::routes())
         .merge(crate::roles::routes())
         .merge(bots::routes())
+        .merge(crate::calls::routes())
         .merge(crate::invite_page::routes())
         .layer(axum::extract::DefaultBodyLimit::max(
             uploads::max_file_bytes() as usize * uploads::MAX_FILES + 1024 * 1024,
