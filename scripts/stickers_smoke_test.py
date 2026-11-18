@@ -57,3 +57,16 @@ try:
 except urllib.error.HTTPError as err:
     print("served after delete ->", err.code)
 print("remaining ->", [x["name"] for x in req("GET", f"/guilds/{gid}/stickers", token=to)[1]])
+
+# Stickers on messages
+ctype, body = multipart({"name": "chat_1", "tags": "chat"}, PNG, "chat.png")
+cid = req("POST", f"/guilds/{gid}/stickers", raw=body, token=to, ctype=ctype)[1]["id"]
+s, msg = req("POST", f"/channels/{ch}/messages", {"content": "", "sticker_ids": [cid]}, tm)
+print("send sticker ->", s, [x["name"] for x in msg.get("sticker_items", [])] == ["chat_1"], msg["sticker_items"][0]["format_type"] == 1)
+print("history shows sticker ->", [x["sticker_items"][0]["id"] == cid for x in req("GET", f"/channels/{ch}/messages", token=tm)[1] if x["id"] == msg["id"]] == [True])
+print("four stickers refused ->", req("POST", f"/channels/{ch}/messages", {"content": "x", "sticker_ids": [cid, cid, cid, cid]}, tm)[0])
+print("unknown sticker refused ->", req("POST", f"/channels/{ch}/messages", {"content": "x", "sticker_ids": ["999"]}, tm)[0])
+print("empty with sticker ok ->", req("POST", f"/channels/{ch}/messages", {"content": "", "sticker_ids": [cid]}, to)[0])
+print("no content and no sticker refused ->", req("POST", f"/channels/{ch}/messages", {"content": "", "sticker_ids": []}, to)[0])
+req("DELETE", f"/guilds/{gid}/stickers/{cid}", token=to)
+print("deleted sticker hidden ->", [x["sticker_items"] for x in req("GET", f"/channels/{ch}/messages", token=tm)[1] if x["id"] == msg["id"]] == [[]])

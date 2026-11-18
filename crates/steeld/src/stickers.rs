@@ -10,6 +10,7 @@ use axum::{
     routing::{get, patch},
     Json, Router,
 };
+use flint_protocol::{Message, StickerItem};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -392,4 +393,73 @@ async fn serve(State(state): State<AppState>, Path(file): Path<String>) -> Respo
             .into_response(),
         Err(_) => not_found(),
     }
+}
+
+/// Largest number of stickers one message may carry.
+pub const MAX_MESSAGE_STICKERS: usize = 3;
+
+/// Checks the sticker ids a message wants to carry. Each must be a sticker of the channel's guild.
+pub async fn check_send(
+    state: &AppState,
+    guild_id: &str,
+    ids: &[String],
+) -> ApiResult<Vec<String>> {
+    if ids.len() > MAX_MESSAGE_STICKERS {
+        return Err(invalid("a message can carry at most 3 stickers"));
+    }
+    for id in ids {
+        let found: Option<(i64,)> = sqlx::query_as(&crate::db::sql(
+            "SELECT 1 FROM guild_stickers WHERE guild_id = ? AND id = ?",
+        ))
+        .bind(guild_id)
+        .bind(id)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(db)?;
+        if found.is_none() {
+            return Err(invalid("unknown sticker"));
+        }
+    }
+    Ok(ids.to_vec())
+}
+
+/// Records the stickers of a new message, in order.
+pub async fn attach(state: &AppState, message_id: &str, ids: &[String]) -> Result<(), sqlx::Error> {
+    for (position, id) in ids.iter().enumerate() {
+        sqlx::query(&crate::db::sql(
+            "INSERT INTO message_stickers (message_id, position, sticker_id) VALUES (?, ?, ?)",
+        ))
+        .bind(message_id)
+        .bind(position as i64)
+        .bind(id)
+        .execute(&state.db)
+        .await?;
+    }
+    Ok(())
+}
+
+/// Fills `sticker_items` on each message. Stickers deleted since sending are left out.
+pub async fn hydrate_messages(
+    state: &AppState,
+    messages: &mut [Message],
+) -> Result<(), sqlx::Error> {
+    for message in messages.iter_mut() {
+        let rows: Vec<(String, String, i64)> = sqlx::query_as(&crate::db::sql(
+            "SELECT gs.id, gs.name, gs.format_type FROM message_stickers ms \
+             JOIN guild_stickers gs ON gs.id = ms.sticker_id \
+             WHERE ms.message_id = ? ORDER BY ms.position",
+        ))
+        .bind(&message.id)
+        .fetch_all(&state.db)
+        .await?;
+        message.sticker_items = rows
+            .into_iter()
+            .map(|(id, name, format)| StickerItem {
+                id,
+                name,
+                format_type: format as u8,
+            })
+            .collect();
+    }
+    Ok(())
 }

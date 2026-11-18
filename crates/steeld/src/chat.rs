@@ -428,6 +428,7 @@ pub fn message_json(row: MessageRow) -> Message {
         flags: row.flags as u32,
         components: serde_json::from_str(&row.components).unwrap_or_default(),
         poll: None,
+        sticker_items: Vec::new(),
     }
 }
 
@@ -687,6 +688,7 @@ async fn list_messages(
         uploads::hydrate(&state, &mut messages).await.map_err(db)?;
         crate::reactions::hydrate(&state, &user.id, &mut messages).await.map_err(db)?;
         crate::polls::hydrate(&state, &user.id, &mut messages).await.map_err(db)?;
+        crate::stickers::hydrate_messages(&state, &mut messages).await.map_err(db)?;
         Ok(Json(messages).into_response())
     }
     .await;
@@ -734,7 +736,15 @@ async fn send_message(
         if let Some(poll) = &payload.poll {
             crate::polls::validate(poll)?;
         }
-        if content.trim().is_empty() && files.is_empty() && claimed.is_empty() && payload.poll.is_none() {
+        let sticker_ids = if payload.sticker_ids.is_empty() {
+            Vec::new()
+        } else {
+            let Some(guild_id) = channel.guild_id.as_deref() else {
+                return Err(api_error(StatusCode::BAD_REQUEST, 50035, "stickers can only be sent in servers"));
+            };
+            crate::stickers::check_send(&state, guild_id, &payload.sticker_ids).await?
+        };
+        if content.trim().is_empty() && files.is_empty() && claimed.is_empty() && payload.poll.is_none() && sticker_ids.is_empty() {
             return Err(api_error(StatusCode::BAD_REQUEST, 50035, "a message needs content or a file"));
         }
         let reply_to = match payload.message_reference.as_ref().and_then(|r| r.message_id.clone()) {
@@ -762,6 +772,7 @@ async fn send_message(
                 return Err(db(e));
             }
         }
+        crate::stickers::attach(&state, &message_id, &sticker_ids).await.map_err(db)?;
         if !claimed.is_empty() {
             uploads::attach_claimed(&state, &channel_id, &message_id, &claimed).await.map_err(db)?;
         }
@@ -778,6 +789,7 @@ async fn send_message(
         uploads::hydrate(&state, &mut out).await.map_err(db)?;
         crate::reactions::hydrate(&state, &user.id, &mut out).await.map_err(db)?;
         crate::polls::hydrate(&state, &user.id, &mut out).await.map_err(db)?;
+        crate::stickers::hydrate_messages(&state, &mut out).await.map_err(db)?;
         let message = out.remove(0);
         let targets = channel_audience(&state, &channel).await.map_err(db)?;
         state.publish(targets, "MESSAGE_CREATE", serde_json::to_value(&message).unwrap_or_default());
@@ -855,6 +867,7 @@ async fn read_multipart(
             attachments: Vec::new(),
             components: Vec::new(),
             poll: None,
+            sticker_ids: Vec::new(),
         }),
         files,
     ))
@@ -898,6 +911,9 @@ async fn edit_message(
             .await
             .map_err(db)?;
         crate::polls::hydrate(&state, &user.id, &mut out)
+            .await
+            .map_err(db)?;
+        crate::stickers::hydrate_messages(&state, &mut out)
             .await
             .map_err(db)?;
         let message = out.remove(0);
