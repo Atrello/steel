@@ -113,3 +113,94 @@ mod tests {
         assert_eq!(v["d"]["heartbeat_interval"], 41250);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Guilds, channels, messages, invites
+// ---------------------------------------------------------------------------
+
+/// Channel types. Only text channels exist in this chunk.
+pub mod channel_type {
+    pub const GUILD_TEXT: u8 = 0;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Channel {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub guild_id: Option<String>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub position: i64,
+    #[serde(default)]
+    pub topic: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Guild {
+    pub id: String,
+    pub name: String,
+    pub owner_id: String,
+    #[serde(default)]
+    pub channels: Vec<Channel>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MessageReference {
+    #[serde(default)]
+    pub message_id: Option<String>,
+    #[serde(default)]
+    pub channel_id: Option<String>,
+    #[serde(default)]
+    pub guild_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Message {
+    pub id: String,
+    pub channel_id: String,
+    pub author: User,
+    pub content: String,
+    pub timestamp: String,
+    #[serde(default)]
+    pub edited_timestamp: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_reference: Option<MessageReference>,
+    #[serde(rename = "type", default)]
+    pub kind: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateGuild {
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateChannel {
+    pub name: String,
+    #[serde(rename = "type", default)]
+    pub kind: Option<u8>,
+    #[serde(default)]
+    pub topic: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateMessage {
+    pub content: String,
+    #[serde(default)]
+    pub message_reference: Option<MessageReference>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditMessage {
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Invite {
+    pub code: String,
+    pub guild: Guild,
+    pub channel: Channel,
+}

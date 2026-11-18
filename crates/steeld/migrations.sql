@@ -11,3 +11,46 @@ CREATE TABLE IF NOT EXISTS tokens (
     user_id    TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS guilds (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    owner_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS guild_members (
+    guild_id  TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    user_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    joined_at TEXT NOT NULL,
+    PRIMARY KEY (guild_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS channels (
+    id        TEXT PRIMARY KEY,
+    guild_id  TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    kind      INTEGER NOT NULL,
+    name      TEXT NOT NULL,
+    topic     TEXT,
+    position  INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id          TEXT PRIMARY KEY,
+    channel_id  TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    author_id   TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    content     TEXT NOT NULL,
+    reply_to_id TEXT,
+    created_at  TEXT NOT NULL,
+    edited_at   TEXT
+);
+CREATE INDEX IF NOT EXISTS messages_channel_idx ON messages (channel_id, id);
+
+CREATE TABLE IF NOT EXISTS invites (
+    code       TEXT PRIMARY KEY,
+    guild_id   TEXT NOT NULL REFERENCES guilds(id) ON DELETE CASCADE,
+    channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    inviter_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at TEXT NOT NULL
+);
