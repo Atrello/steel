@@ -1,5 +1,6 @@
 #![allow(clippy::result_large_err)]
 mod api;
+mod audit;
 mod auth;
 mod bots;
 mod channels;

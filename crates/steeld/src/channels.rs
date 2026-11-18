@@ -254,6 +254,17 @@ pub async fn delete_channel(
             .execute(&state.db)
             .await
             .map_err(chat::db)?;
+        crate::audit::record(
+            &state,
+            &guild_id,
+            &user.id,
+            crate::audit::CHANNEL_DELETE,
+            Some(&channel_id),
+            serde_json::json!([{"key": "name", "old_value": json.name}]),
+            None,
+        )
+        .await
+        .map_err(chat::db)?;
         publish_channel(&state, &guild_id, "CHANNEL_DELETE", &json).await;
         Ok(ok_json(&json))
     }

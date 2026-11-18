@@ -622,6 +622,7 @@ async fn create_channel(
             crate::perms::require_guild(&state, &guild_id, &user.id, crate::perms::MANAGE_ROLES).await?;
             crate::channels::write_overwrites(&state, &guild_id, &channel_id, overwrites).await?;
         }
+        crate::audit::record(&state, &guild_id, &user.id, crate::audit::CHANNEL_CREATE, Some(&channel_id), serde_json::json!([{"key": "name", "new_value": name}]), None).await.map_err(db)?;
         let channel = channel_json(&state, channel_row(&state, &channel_id).await?).await?;
         let targets = member_ids(&state, &guild_id).await.map_err(db)?;
         state.publish(targets, "CHANNEL_CREATE", serde_json::to_value(&channel).unwrap_or_default());
