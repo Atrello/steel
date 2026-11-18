@@ -169,17 +169,19 @@ fn unknown(what: &str, code: u32) -> Response {
 
 /// Whether `user_id` is a bot account (owns an application).
 pub async fn is_bot(state: &AppState, user_id: &str) -> Result<bool, sqlx::Error> {
-    let found: Option<(i64,)> = sqlx::query_as(&crate::db::sql("SELECT 1 FROM applications WHERE bot_user_id = ?"))
-        .bind(user_id)
-        .fetch_optional(&state.db)
-        .await?;
+    let found: Option<(i64,)> = sqlx::query_as(&crate::db::sql(
+        "SELECT 1 FROM applications WHERE bot_user_id = ?",
+    ))
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await?;
     Ok(found.is_some())
 }
 
 async fn app_row(state: &AppState, app_id: &str) -> ApiResult<AppRow> {
-    sqlx::query_as(
-        &crate::db::sql("SELECT id, owner_id, bot_user_id, name, description FROM applications WHERE id = ?"),
-    )
+    sqlx::query_as(&crate::db::sql(
+        "SELECT id, owner_id, bot_user_id, name, description FROM applications WHERE id = ?",
+    ))
     .bind(app_id)
     .fetch_optional(&state.db)
     .await
@@ -208,12 +210,13 @@ async fn commandable_app(state: &AppState, headers: &HeaderMap, app_id: &str) ->
 }
 
 async fn bot_user(state: &AppState, bot_user_id: &str) -> ApiResult<User> {
-    let (username,): (String,) = sqlx::query_as(&crate::db::sql("SELECT username FROM users WHERE id = ?"))
-        .bind(bot_user_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(chat::db)?
-        .ok_or_else(|| unknown("user", 10013))?;
+    let (username,): (String,) =
+        sqlx::query_as(&crate::db::sql("SELECT username FROM users WHERE id = ?"))
+            .bind(bot_user_id)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(chat::db)?
+            .ok_or_else(|| unknown("user", 10013))?;
     Ok(User {
         id: bot_user_id.to_string(),
         username,
@@ -392,13 +395,15 @@ async fn patch_application(
                 }
                 app.description = description;
             }
-            sqlx::query(&crate::db::sql("UPDATE applications SET name = ?, description = ? WHERE id = ?"))
-                .bind(&app.name)
-                .bind(&app.description)
-                .bind(&app.id)
-                .execute(&state.db)
-                .await
-                .map_err(chat::db)?;
+            sqlx::query(&crate::db::sql(
+                "UPDATE applications SET name = ?, description = ? WHERE id = ?",
+            ))
+            .bind(&app.name)
+            .bind(&app.description)
+            .bind(&app.id)
+            .execute(&state.db)
+            .await
+            .map_err(chat::db)?;
             Ok(Json(app_json(&state, &app).await?).into_response())
         }
         .await,
@@ -421,11 +426,13 @@ async fn delete_application(
                 .execute(&mut *tx)
                 .await
                 .map_err(chat::db)?;
-            sqlx::query(&crate::db::sql("DELETE FROM guild_members WHERE user_id = ?"))
-                .bind(&app.bot_user_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(chat::db)?;
+            sqlx::query(&crate::db::sql(
+                "DELETE FROM guild_members WHERE user_id = ?",
+            ))
+            .bind(&app.bot_user_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(chat::db)?;
             sqlx::query(&crate::db::sql("DELETE FROM applications WHERE id = ?"))
                 .bind(&app.id)
                 .execute(&mut *tx)
@@ -454,13 +461,15 @@ async fn reset_token(
                 .execute(&mut *tx)
                 .await
                 .map_err(chat::db)?;
-            sqlx::query(&crate::db::sql("INSERT INTO tokens (token_hash, user_id, created_at) VALUES (?, ?, ?)"))
-                .bind(auth::hash_token(&token))
-                .bind(&app.bot_user_id)
-                .bind(chat::now_iso())
-                .execute(&mut *tx)
-                .await
-                .map_err(chat::db)?;
+            sqlx::query(&crate::db::sql(
+                "INSERT INTO tokens (token_hash, user_id, created_at) VALUES (?, ?, ?)",
+            ))
+            .bind(auth::hash_token(&token))
+            .bind(&app.bot_user_id)
+            .bind(chat::now_iso())
+            .execute(&mut *tx)
+            .await
+            .map_err(chat::db)?;
             tx.commit().await.map_err(chat::db)?;
             Ok(Json(json!({ "token": token })).into_response())
         }
@@ -520,12 +529,14 @@ async fn remove_bot_from_guild(
             if guild.owner_id != user.id {
                 return Err(chat::no_access());
             }
-            sqlx::query(&crate::db::sql("DELETE FROM guild_members WHERE guild_id = ? AND user_id = ?"))
-                .bind(&guild_id)
-                .bind(&app.bot_user_id)
-                .execute(&state.db)
-                .await
-                .map_err(chat::db)?;
+            sqlx::query(&crate::db::sql(
+                "DELETE FROM guild_members WHERE guild_id = ? AND user_id = ?",
+            ))
+            .bind(&guild_id)
+            .bind(&app.bot_user_id)
+            .execute(&state.db)
+            .await
+            .map_err(chat::db)?;
             state.publish(
                 vec![app.bot_user_id.clone()],
                 "GUILD_DELETE",
@@ -649,10 +660,10 @@ async fn list_commands(
     app: &AppRow,
     guild: Option<&str>,
 ) -> ApiResult<Vec<CommandRow>> {
-    sqlx::query_as(
-        &crate::db::sql("SELECT id, version, guild_id, name, description, options FROM application_commands \
-         WHERE application_id = ? AND guild_id IS ? ORDER BY CAST(id AS BIGINT)"),
-    )
+    sqlx::query_as(&crate::db::sql(
+        "SELECT id, version, guild_id, name, description, options FROM application_commands \
+         WHERE application_id = ? AND guild_id IS ? ORDER BY CAST(id AS BIGINT)",
+    ))
     .bind(&app.id)
     .bind(guild)
     .fetch_all(&state.db)
@@ -671,9 +682,9 @@ async fn insert_command(
     body: &CommandBody,
 ) -> ApiResult<Value> {
     let options = validate_command(body)?;
-    let count: (i64,) = sqlx::query_as(
-        &crate::db::sql("SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND guild_id IS ?"),
-    )
+    let count: (i64,) = sqlx::query_as(&crate::db::sql(
+        "SELECT COUNT(*) FROM application_commands WHERE application_id = ? AND guild_id IS ?",
+    ))
     .bind(&app.id)
     .bind(guild)
     .fetch_one(&state.db)
@@ -758,12 +769,14 @@ async fn overwrite_commands(
         ));
     }
     let mut tx = state.db.begin().await.map_err(chat::db)?;
-    sqlx::query(&crate::db::sql("DELETE FROM application_commands WHERE application_id = ? AND guild_id IS ?"))
-        .bind(&app.id)
-        .bind(guild)
-        .execute(&mut *tx)
-        .await
-        .map_err(chat::db)?;
+    sqlx::query(&crate::db::sql(
+        "DELETE FROM application_commands WHERE application_id = ? AND guild_id IS ?",
+    ))
+    .bind(&app.id)
+    .bind(guild)
+    .execute(&mut *tx)
+    .await
+    .map_err(chat::db)?;
     let mut out = Vec::with_capacity(bodies.len());
     let now = chat::now_iso();
     for (body, options) in bodies.iter().zip(options) {
@@ -803,10 +816,10 @@ async fn edit_command_row(
 ) -> ApiResult<Response> {
     let options = validate_command(body)?;
     let version = auth::new_id();
-    let updated = sqlx::query(
-        &crate::db::sql("UPDATE application_commands SET name = ?, description = ?, options = ?, version = ? \
-         WHERE id = ? AND application_id = ? AND guild_id IS ?"),
-    )
+    let updated = sqlx::query(&crate::db::sql(
+        "UPDATE application_commands SET name = ?, description = ?, options = ?, version = ? \
+         WHERE id = ? AND application_id = ? AND guild_id IS ?",
+    ))
     .bind(&body.name)
     .bind(&body.description)
     .bind(&options)
@@ -846,9 +859,9 @@ async fn delete_command_row(
     guild: Option<&str>,
     command_id: &str,
 ) -> ApiResult<Response> {
-    let deleted = sqlx::query(
-        &crate::db::sql("DELETE FROM application_commands WHERE id = ? AND application_id = ? AND guild_id IS ?"),
-    )
+    let deleted = sqlx::query(&crate::db::sql(
+        "DELETE FROM application_commands WHERE id = ? AND application_id = ? AND guild_id IS ?",
+    ))
     .bind(command_id)
     .bind(&app.id)
     .bind(guild)
@@ -1467,23 +1480,27 @@ async fn edit_bot_message(
     components: Option<&[Value]>,
 ) -> ApiResult<Message> {
     if let Some(content) = content {
-        sqlx::query(&crate::db::sql("UPDATE messages SET content = ?, edited_at = ? WHERE id = ?"))
-            .bind(content)
-            .bind(chat::now_iso())
-            .bind(message_id)
-            .execute(&state.db)
-            .await
-            .map_err(chat::db)?;
+        sqlx::query(&crate::db::sql(
+            "UPDATE messages SET content = ?, edited_at = ? WHERE id = ?",
+        ))
+        .bind(content)
+        .bind(chat::now_iso())
+        .bind(message_id)
+        .execute(&state.db)
+        .await
+        .map_err(chat::db)?;
     }
     if let Some(components) = components {
         let components_text = serde_json::to_string(components).unwrap_or_else(|_| "[]".into());
-        let updated = sqlx::query(&crate::db::sql("UPDATE message_extras SET components = ? WHERE message_id = ?"))
-            .bind(&components_text)
-            .bind(message_id)
-            .execute(&state.db)
-            .await
-            .map_err(chat::db)?
-            .rows_affected();
+        let updated = sqlx::query(&crate::db::sql(
+            "UPDATE message_extras SET components = ? WHERE message_id = ?",
+        ))
+        .bind(&components_text)
+        .bind(message_id)
+        .execute(&state.db)
+        .await
+        .map_err(chat::db)?
+        .rows_affected();
         if updated == 0 {
             store_extras(state, message_id, 0, components, None)
                 .await
@@ -1492,13 +1509,14 @@ async fn edit_bot_message(
     }
     let row = chat::message_by_id(state, message_id).await?;
     let channel = chat::channel_row(state, &row.channel_id).await?;
-    let extras: (i64, Option<String>) =
-        sqlx::query_as(&crate::db::sql("SELECT flags, invoker_id FROM message_extras WHERE message_id = ?"))
-            .bind(message_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(chat::db)?
-            .unwrap_or((0, None));
+    let extras: (i64, Option<String>) = sqlx::query_as(&crate::db::sql(
+        "SELECT flags, invoker_id FROM message_extras WHERE message_id = ?",
+    ))
+    .bind(message_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(chat::db)?
+    .unwrap_or((0, None));
     let message = chat::message_json(row);
     let targets = message_audience(state, &channel, extras.0 as u32, extras.1.as_deref()).await?;
     state.publish(
@@ -1626,35 +1644,38 @@ async fn callback(
 }
 
 async fn is_guild_member(state: &AppState, guild_id: &str, user_id: &str) -> ApiResult<bool> {
-    let found: Option<(i64,)> =
-        sqlx::query_as(&crate::db::sql("SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?"))
-            .bind(guild_id)
-            .bind(user_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(chat::db)?;
+    let found: Option<(i64,)> = sqlx::query_as(&crate::db::sql(
+        "SELECT 1 FROM guild_members WHERE guild_id = ? AND user_id = ?",
+    ))
+    .bind(guild_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(chat::db)?;
     Ok(found.is_some())
 }
 
 async fn is_recipient(state: &AppState, channel_id: &str, user_id: &str) -> ApiResult<bool> {
-    let found: Option<(i64,)> =
-        sqlx::query_as(&crate::db::sql("SELECT 1 FROM channel_recipients WHERE channel_id = ? AND user_id = ?"))
-            .bind(channel_id)
-            .bind(user_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(chat::db)?;
+    let found: Option<(i64,)> = sqlx::query_as(&crate::db::sql(
+        "SELECT 1 FROM channel_recipients WHERE channel_id = ? AND user_id = ?",
+    ))
+    .bind(channel_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(chat::db)?;
     Ok(found.is_some())
 }
 
 async fn is_installed(state: &AppState, user_id: &str, application_id: &str) -> ApiResult<bool> {
-    let found: Option<(i64,)> =
-        sqlx::query_as(&crate::db::sql("SELECT 1 FROM user_installs WHERE user_id = ? AND application_id = ?"))
-            .bind(user_id)
-            .bind(application_id)
-            .fetch_optional(&state.db)
-            .await
-            .map_err(chat::db)?;
+    let found: Option<(i64,)> = sqlx::query_as(&crate::db::sql(
+        "SELECT 1 FROM user_installs WHERE user_id = ? AND application_id = ?",
+    ))
+    .bind(user_id)
+    .bind(application_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(chat::db)?;
     Ok(found.is_some())
 }
 
@@ -1687,12 +1708,14 @@ async fn uninstall_app(
     done(
         async {
             let user = chat::authed(&state, &headers).await?;
-            sqlx::query(&crate::db::sql("DELETE FROM user_installs WHERE user_id = ? AND application_id = ?"))
-                .bind(&user.id)
-                .bind(&app_id)
-                .execute(&state.db)
-                .await
-                .map_err(chat::db)?;
+            sqlx::query(&crate::db::sql(
+                "DELETE FROM user_installs WHERE user_id = ? AND application_id = ?",
+            ))
+            .bind(&user.id)
+            .bind(&app_id)
+            .execute(&state.db)
+            .await
+            .map_err(chat::db)?;
             Ok(StatusCode::NO_CONTENT.into_response())
         }
         .await,
