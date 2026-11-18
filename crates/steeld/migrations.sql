@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS channels (
     name       TEXT,
     topic      TEXT,
     position   INTEGER NOT NULL DEFAULT 0,
+    parent_id  TEXT REFERENCES channels(id) ON DELETE SET NULL,
     owner_id   TEXT REFERENCES users(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL
 );

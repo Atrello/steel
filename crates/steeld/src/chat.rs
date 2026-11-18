@@ -35,14 +35,27 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route(&format!("{API_PREFIX}/guilds"), post(create_guild))
         .route(&format!("{API_PREFIX}/users/@me/guilds"), get(my_guilds))
-        .route(&format!("{API_PREFIX}/guilds/{{guild_id}}"), get(get_guild))
+        .route(
+            &format!("{API_PREFIX}/guilds/{{guild_id}}"),
+            get(get_guild)
+                .patch(crate::channels::patch_guild)
+                .delete(crate::channels::delete_guild),
+        )
         .route(
             &format!("{API_PREFIX}/guilds/{{guild_id}}/channels"),
-            get(list_channels).post(create_channel),
+            get(list_channels)
+                .post(create_channel)
+                .patch(crate::channels::reorder_channels),
+        )
+        .route(
+            &format!("{API_PREFIX}/guilds/{{guild_id}}/invites"),
+            get(crate::channels::list_guild_invites),
         )
         .route(
             &format!("{API_PREFIX}/channels/{{channel_id}}"),
-            get(get_channel),
+            get(get_channel)
+                .patch(crate::channels::patch_channel)
+                .delete(crate::channels::delete_channel),
         )
         .route(
             &format!("{API_PREFIX}/channels/{{channel_id}}/messages"),
@@ -62,7 +75,9 @@ pub fn routes() -> Router<AppState> {
         )
         .route(
             &format!("{API_PREFIX}/invites/{{code}}"),
-            get(get_invite).post(accept_invite),
+            get(get_invite)
+                .post(accept_invite)
+                .delete(crate::channels::delete_invite),
         )
 }
 
@@ -85,6 +100,7 @@ pub struct ChannelRow {
     pub name: Option<String>,
     pub topic: Option<String>,
     pub position: i64,
+    pub parent_id: Option<String>,
 }
 
 #[derive(sqlx::FromRow)]
@@ -109,7 +125,7 @@ fn internal(err: impl std::fmt::Display) -> Response {
     )
 }
 
-fn db(err: sqlx::Error) -> Response {
+pub fn db(err: sqlx::Error) -> Response {
     internal(err)
 }
 
@@ -129,7 +145,7 @@ fn missing(what: &str) -> Response {
     api_error(StatusCode::NOT_FOUND, 10003, format!("Unknown {what}"))
 }
 
-fn no_access() -> Response {
+pub fn no_access() -> Response {
     api_error(StatusCode::FORBIDDEN, 50001, "Missing Access")
 }
 
@@ -140,7 +156,7 @@ pub async fn authed(state: &AppState, headers: &HeaderMap) -> ApiResult<User> {
         .ok_or_else(|| api_error(StatusCode::UNAUTHORIZED, 0, "401: Unauthorized"))
 }
 
-fn check_name(name: &str) -> ApiResult<String> {
+pub fn check_name(name: &str) -> ApiResult<String> {
     let trimmed = name.trim();
     if trimmed.is_empty() || trimmed.chars().count() > MAX_NAME {
         return Err(api_error(
@@ -213,12 +229,14 @@ pub async fn guild_row(state: &AppState, guild_id: &str) -> ApiResult<GuildRow> 
 }
 
 pub async fn channel_row(state: &AppState, channel_id: &str) -> ApiResult<ChannelRow> {
-    sqlx::query_as("SELECT id, guild_id, kind, name, topic, position FROM channels WHERE id = ?")
-        .bind(channel_id)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(db)?
-        .ok_or_else(|| missing("channel"))
+    sqlx::query_as(
+        "SELECT id, guild_id, kind, name, topic, position, parent_id FROM channels WHERE id = ?",
+    )
+    .bind(channel_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(db)?
+    .ok_or_else(|| missing("channel"))
 }
 
 /// Channel as sent to clients. DM channels include their recipients.
@@ -245,6 +263,8 @@ pub async fn channel_json(state: &AppState, row: ChannelRow) -> ApiResult<Channe
         name: row.name,
         position: row.position,
         topic: row.topic,
+        parent_id: row.parent_id,
+        permission_overwrites: Vec::new(),
         recipients,
     })
 }
@@ -264,7 +284,7 @@ async fn guild_channel_rows(
     guild_id: &str,
 ) -> Result<Vec<ChannelRow>, sqlx::Error> {
     sqlx::query_as(
-        "SELECT id, guild_id, kind, name, topic, position FROM channels WHERE guild_id = ? ORDER BY position, CAST(id AS INTEGER)",
+        "SELECT id, guild_id, kind, name, topic, position, parent_id FROM channels WHERE guild_id = ? ORDER BY position, CAST(id AS INTEGER)",
     )
     .bind(guild_id)
     .fetch_all(&state.db)
@@ -280,6 +300,8 @@ fn guild_channel(row: ChannelRow) -> Channel {
         name: row.name,
         position: row.position,
         topic: row.topic,
+        parent_id: row.parent_id,
+        permission_overwrites: Vec::new(),
         recipients: Vec::new(),
     }
 }
@@ -293,7 +315,7 @@ pub async fn guild_channels(state: &AppState, guild_id: &str) -> ApiResult<Vec<C
         .collect())
 }
 
-async fn guild_json(state: &AppState, row: GuildRow, with_channels: bool) -> ApiResult<Guild> {
+pub async fn guild_json(state: &AppState, row: GuildRow, with_channels: bool) -> ApiResult<Guild> {
     let channels = if with_channels {
         guild_channels(state, &row.id).await?
     } else {
@@ -379,7 +401,7 @@ pub async fn message_by_id(state: &AppState, message_id: &str) -> ApiResult<Mess
         .ok_or_else(|| missing("message"))
 }
 
-fn now_iso() -> String {
+pub fn now_iso() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
@@ -515,18 +537,31 @@ async fn create_channel(
         }
         let name = check_name(&req.name)?;
         let kind = req.kind.unwrap_or(channel_type::GUILD_TEXT);
-        if kind != channel_type::GUILD_TEXT {
-            return Err(api_error(StatusCode::BAD_REQUEST, 50024, "only text channels are supported"));
+        // Announcement, stage and forum channels are stored like text channels; their extra
+        // behavior (posts, threads, stage sessions) is not implemented yet.
+        if !matches!(kind, channel_type::GUILD_TEXT | channel_type::GUILD_VOICE | channel_type::GUILD_CATEGORY | 5 | 13 | 15) {
+            return Err(api_error(StatusCode::BAD_REQUEST, 50024, "unsupported channel type"));
         }
+        // Categories group channels and cannot sit inside another category.
+        let parent = match req.parent_id.as_deref().filter(|p| !p.is_empty()) {
+            Some(_) if kind == channel_type::GUILD_CATEGORY => {
+                return Err(api_error(StatusCode::BAD_REQUEST, 50035, "a category cannot have a parent"));
+            }
+            Some(parent) => {
+                crate::channels::check_parent(&state, &guild_id, parent).await?;
+                Some(parent.to_string())
+            }
+            None => None,
+        };
         let channel_id = auth::new_id();
         let position: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(position), -1) + 1 FROM channels WHERE guild_id = ?")
             .bind(&guild_id)
             .fetch_one(&state.db)
             .await
             .map_err(db)?;
-        sqlx::query("INSERT INTO channels (id, guild_id, kind, name, topic, position, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        sqlx::query("INSERT INTO channels (id, guild_id, kind, name, topic, position, parent_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
             .bind(&channel_id).bind(&guild_id).bind(kind as i64).bind(&name)
-            .bind(req.topic.as_deref().filter(|t| !t.is_empty())).bind(position).bind(now_iso())
+            .bind(req.topic.as_deref().filter(|t| !t.is_empty())).bind(position).bind(parent).bind(now_iso())
             .execute(&state.db).await.map_err(db)?;
         let channel = channel_json(&state, channel_row(&state, &channel_id).await?).await?;
         let targets = member_ids(&state, &guild_id).await.map_err(db)?;

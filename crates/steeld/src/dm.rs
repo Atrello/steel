@@ -88,6 +88,8 @@ async fn dm_channel(
         name,
         position: 0,
         topic: None,
+        parent_id: None,
+        permission_overwrites: Vec::new(),
         recipients: users
             .into_iter()
             .map(|(id, username)| chat::plain_user(id, username))

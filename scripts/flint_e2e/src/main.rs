@@ -86,6 +86,13 @@ async fn main() {
     let (st, guild) = rest("POST", &alice_token, "/guilds", Some(json!({"name": "E2E guild"}))).await;
     assert!(st / 100 == 2, "create guild: {guild}");
     let guild_id = guild["id"].as_str().expect("guild id").to_owned();
+    step("alice's gateway receives GUILD_CREATE (GuildJoined) for the new guild");
+    let joined = wait_for(&mut alice_rx, "alice GuildJoined", |e| match e {
+        Event::GuildJoined(g) if g.id.0.to_string() == guild_id => Some(()),
+        _ => None,
+    }).await;
+    let _ = joined;
+    step("PASS GuildJoined on creator");
     let (st, channels) = rest("GET", &alice_token, &format!("/guilds/{guild_id}/channels"), None).await;
     assert!(st / 100 == 2, "list channels: {channels}");
     let general = channels.as_array().unwrap().iter().find(|c| c["type"] == 0).expect("text channel")["id"].as_str().unwrap().to_owned();
@@ -150,6 +157,94 @@ async fn main() {
     let bytes = fetched.bytes().await.expect("cdn bytes");
     assert_eq!(bytes.as_ref(), body.as_slice(), "downloaded bytes match upload");
     step("PASS upload, MESSAGE_CREATE with attachment, CDN bytes match");
+
+    // ----- UI flows: channel create, categories, profile, image upload -----
+    let png: Vec<u8> = vec![137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 218, 99, 100, 96, 248, 95, 15, 0, 2, 135, 1, 128, 235, 71, 186, 146, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130];
+
+
+    step("create text, voice, category and a voice channel inside it, through Flint's channel actions");
+    use client_core::channel_actions::{Action, CreateKind, Outcome};
+    let guild_model: Id = guild_id.parse().expect("guild id");
+    let mut request = 1u64;
+    let mut run_action = |channel: Id, action: Action| {
+        request += 1;
+        let api = &api_alice;
+        let request = request;
+        async move {
+            api.execute(Command::ChannelAction { guild: guild_model, channel, request, action }).await
+        }
+    };
+    let text_event = run_action(channel, Action::Create { name: "e2e-text".into(), kind: CreateKind::Text }).await;
+    let text_id = match text_event {
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Ok(Outcome::Channel { channel, .. }), .. }) => channel.id,
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Err(e), .. }) => panic!("text channel create failed: {e}"),
+        _ => panic!("text channel: unexpected event"),
+    };
+    let _ = text_id;
+    step("PASS text channel create");
+
+    let voice_event = run_action(channel, Action::Create { name: "e2e-voice".into(), kind: CreateKind::Voice }).await;
+    match voice_event {
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Ok(Outcome::Channel { .. }), .. }) => {}
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Err(e), .. }) => panic!("voice channel create failed: {e}"),
+        _ => panic!("voice channel: unexpected event"),
+    }
+    step("PASS voice channel create (Flint no longer reports Outcome unknown)");
+
+    let category_event = run_action(channel, Action::CreateCategory { name: "e2e-category".into() }).await;
+    let category_id = match category_event {
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Ok(Outcome::Channel { channel, .. }), .. }) => channel.id,
+        Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Err(e), .. }) => panic!("category create failed: {e}"),
+        _ => panic!("category: unexpected event"),
+    };
+    let nested = run_action(category_id, Action::Create { name: "e2e-nested".into(), kind: CreateKind::Voice }).await;
+    match &nested { Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Ok(_), .. }) => {} Event::ChannelAction(client_core::channel_actions::Event::Finished { result: Err(e), .. }) => panic!("voice channel inside category failed: {e}"), _ => panic!("nested: unexpected event") }
+    step("PASS category and nested voice channel");
+
+    let (st, listed) = rest("GET", &alice_token, &format!("/guilds/{guild_id}/channels"), None).await;
+    assert!(st == 200, "list channels: {listed}");
+    let kinds: Vec<i64> = listed.as_array().unwrap().iter().map(|c| c["type"].as_i64().unwrap()).collect();
+    assert!(kinds.contains(&2) && kinds.contains(&4), "expected voice and category in {kinds:?}");
+    step("PASS channel list shows voice and category types");
+
+    step("bob opens alice's profile popout through Flint; it must decode");
+    let alice_id = {
+        let (st, me) = rest("GET", &alice_token, "/users/@me", None).await;
+        assert!(st == 200, "users/@me: {me}");
+        me["id"].as_str().unwrap().parse::<Id>().expect("alice id")
+    };
+    let api_bob_profile = DiscordApi::new(bob.clone()).expect("bob api");
+    let profile = api_bob_profile
+        .execute(Command::Profile { user: alice_id, guild: None, request: 9, with_mutuals: false, cosmetics: Default::default() })
+        .await;
+    match profile {
+        Event::Profile { result: Ok(_), .. } => {}
+        Event::Profile { result: Err(e), .. } => panic!("profile failed: {e}"),
+        _ => panic!("profile: unexpected event"),
+    }
+    step("PASS profile decodes");
+
+    step("alice uploads a PNG through Flint; bob must get it and the bytes must match");
+    let (progress_tx2, _progress_rx2) = watch::channel(Status::Preparing);
+    let (_cancel_tx2, cancel_rx2) = watch::channel(false);
+    let image_text = format!("photo {tag}");
+    let image_source = Source::pasted_png(png.clone()).expect("png source");
+    let image_event = api_alice
+        .upload_message(Command::Send { sticker: None, channel, content: image_text.clone(), nonce: "e2e-photo".into(), reply: None }, image_source, progress_tx2, cancel_rx2)
+        .await;
+    match image_event {
+        Event::SendResult { result: Ok(m), .. } => assert_eq!(m.attachments.len(), 1, "photo attachment"),
+        Event::SendResult { result: Err(e), .. } => panic!("photo upload failed: {e}"),
+        _ => panic!("photo upload: unexpected event"),
+    }
+    let (st, listed) = rest("GET", &bob_token, &format!("/channels/{general}/messages?limit=5"), None).await;
+    assert!(st == 200, "bob lists messages: {listed}");
+    let found = listed.as_array().unwrap().iter().find(|m| m["content"] == image_text).expect("photo message visible");
+    let url = model::endpoints::absolute_url(found["attachments"][0]["url"].as_str().expect("photo url"));
+    let fetched = wreq::Client::new().get(url.clone()).send().await.expect("fetch photo");
+    assert!(fetched.status().is_success(), "photo fetch {url}: {}", fetched.status());
+    assert_eq!(fetched.bytes().await.expect("photo bytes").as_ref(), png.as_slice(), "photo bytes match");
+    step("PASS photo upload and download");
 
     step("ALL CHECKS PASSED");
     std::process::exit(0);
